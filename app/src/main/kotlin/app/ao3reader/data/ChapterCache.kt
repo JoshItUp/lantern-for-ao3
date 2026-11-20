@@ -50,6 +50,10 @@ class ChapterCache(
         }
     }
 
+    fun remove(workId: Long, chapterKey: String) {
+        synchronized(lock) { file(workId, chapterKey).delete() }
+    }
+
     fun trim() {
         synchronized(lock) {
             val now = clock()

@@ -10,6 +10,10 @@ import org.jsoup.nodes.Element
 object ChapterParser {
     private val numPrefix = Regex("^\\s*(\\d+)\\.\\s*")
 
+    /** True only if the page has a `#chapters` container with a `userstuff` body. */
+    fun looksLikeChapterPage(html: String): Boolean =
+        html.contains("chapters") && Jsoup.parse(html).selectFirst("#chapters div.userstuff") != null
+
     fun parse(html: String, workId: Long): ChapterContent {
         val doc = Jsoup.parse(html)
         val skin: Element = doc.selectFirst("#workskin") ?: doc.body()

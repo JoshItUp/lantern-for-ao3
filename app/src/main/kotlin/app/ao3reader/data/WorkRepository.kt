@@ -43,15 +43,31 @@ class WorkRepository(
     suspend fun chapter(workId: Long, ref: ChapterRef): Loaded<ChapterContent> {
         val key = keyOf(ref)
         val cached = withContext(ioDispatcher) { cache.get(workId, key) }
-        val html = cached ?: when (val r = fetcher.get(Ao3Urls.chapter(workId, ref.chapterId))) {
-            is FetchResult.Ok -> {
-                withContext(ioDispatcher) { try { cache.put(workId, key, r.html) } catch (_: IOException) {} }
-                r.html
-            }
-            else -> return Loaded.Error(r)
+        if (cached != null) {
+            val parsed = parseValid(cached, workId)
+            if (parsed != null) return Loaded.Ok(parsed)
+            withContext(ioDispatcher) { cache.remove(workId, key) }
         }
-        return Loaded.Ok(withContext(parseDispatcher) { ChapterParser.parse(html, workId) })
+        val r = fetcher.get(Ao3Urls.chapter(workId, ref.chapterId))
+        if (r !is FetchResult.Ok) return Loaded.Error(r)
+        val parsed = parseValid(r.html, workId)
+            ?: return Loaded.Error(FetchResult.Failed(IllegalStateException("not a chapter page")))
+        withContext(ioDispatcher) { try { cache.put(workId, key, r.html) } catch (_: IOException) {} }
+        return Loaded.Ok(parsed)
     }
+
+    /** Parses [html]; null if it is not a chapter page, has an empty body, or the parser throws. */
+    private suspend fun parseValid(html: String, workId: Long): ChapterContent? =
+        withContext(parseDispatcher) {
+            try {
+                if (!ChapterParser.looksLikeChapterPage(html)) null
+                else ChapterParser.parse(html, workId).takeIf { it.body.isNotEmpty() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+        }
 
     fun prefetch(workId: Long, ref: ChapterRef) {
         val key = keyOf(ref)
@@ -62,7 +78,7 @@ class WorkRepository(
                 try {
                     if (withContext(ioDispatcher) { cache.get(workId, key) } != null) return@launch
                     val r = fetcher.get(Ao3Urls.chapter(workId, ref.chapterId))
-                    if (r is FetchResult.Ok) withContext(ioDispatcher) { cache.put(workId, key, r.html) }
+                    if (r is FetchResult.Ok && withContext(parseDispatcher) { ChapterParser.looksLikeChapterPage(r.html) }) withContext(ioDispatcher) { cache.put(workId, key, r.html) }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Throwable) {
