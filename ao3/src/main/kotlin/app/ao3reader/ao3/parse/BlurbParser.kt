@@ -14,7 +14,8 @@ object BlurbParser {
         return WorkPage(works, page, hasNext)
     }
 
-    private fun parseBlurb(li: Element): WorkBlurb? {
+    /** One `li.blurb` -> WorkBlurb; null when it is not a work (series/mystery/deleted). */
+    fun parseBlurb(li: Element): WorkBlurb? {
         val workId: Long = li.id().removePrefix("work_").toLongOrNull()
             ?: li.selectFirst("h4.heading a[href^=/works/]")?.attr("href")
                 ?.removePrefix("/works/")?.takeWhile { it.isDigit() }?.toLongOrNull()
@@ -41,7 +42,9 @@ object BlurbParser {
         val complete = req("iswip")?.let { it.equals("Complete Work", true) }
 
         fun tags(cls: String) = li.select("ul.tags li.$cls a.tag").map { it.text().trim() }
-        val summary: String? = li.selectFirst("blockquote.summary")?.html()?.trim()?.ifEmpty { null }
+        val summary: String? = li.select("blockquote.summary")
+            .firstOrNull { q -> q.parents().none { it.tagName() == "div" && it.hasClass("user") && it.hasClass("module") } }
+            ?.html()?.trim()?.ifEmpty { null }
 
         fun stat(cls: String): Element? = li.selectFirst("dl.stats dd.$cls")
         fun num(cls: String): Int? = stat(cls)?.text()?.replace(",", "")?.trim()?.toIntOrNull()

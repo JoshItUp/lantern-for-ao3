@@ -48,6 +48,7 @@ data class SearchQuery(
     val sort: SortColumn = SortColumn.UPDATED, val sortDescending: Boolean = true,
 )
 
+@Serializable
 data class WorkBlurb(
     val workId: Long, val title: String, val authors: List<String>, val fandoms: List<String>,
     val rating: String?, val warnings: List<String>, val categories: List<String>, val complete: Boolean?,

@@ -19,6 +19,25 @@ object Ao3Urls {
     /** GET shows a confirmation form; the form (or a DELETE override with the page's CSRF token) logs out. */
     fun logout(): HttpUrl = "$BASE/users/logout".toHttpUrl()
 
+    private fun userUrl(user: String, tail: String): HttpUrl =
+        "$BASE/".toHttpUrl().newBuilder().addPathSegment("users").addPathSegment(user).addPathSegment(tail).build()
+
+    private fun paged(b: HttpUrl.Builder, page: Int): HttpUrl {
+        if (page > 1) b.addQueryParameter("page", page.toString())
+        return b.build()
+    }
+
+    /** History, or Marked for Later with toRead. Page 1 carries no page parameter. */
+    fun readings(user: String, page: Int, toRead: Boolean): HttpUrl {
+        val b = userUrl(user, "readings").newBuilder()
+        if (toRead) b.addQueryParameter("show", "to-read")
+        return paged(b, page)
+    }
+
+    fun bookmarks(user: String, page: Int): HttpUrl = paged(userUrl(user, "bookmarks").newBuilder(), page)
+
+    fun subscriptions(user: String, page: Int): HttpUrl = paged(userUrl(user, "subscriptions").newBuilder(), page)
+
     fun navigate(workId: Long): HttpUrl = "$BASE/works/$workId/navigate".toHttpUrl()
 
     /** kind: fandom | character | relationship | freeform */
