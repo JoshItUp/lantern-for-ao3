@@ -1,5 +1,6 @@
 package app.ao3reader.ui.search
 
+import androidx.compose.animation.core.animate
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,8 +17,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.layout.systemBarsIgnoringVisibility
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,12 +31,15 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBarState
+import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -46,10 +53,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.ao3reader.ao3.model.SearchQuery
@@ -57,6 +71,7 @@ import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.data.db.PresetEntity
 import app.ao3reader.data.db.ProgressEntity
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 
 /** Opens the reader. chapterId null + number 1 means "start of the work". */
@@ -84,7 +99,7 @@ private sealed interface NameDialog {
     data class Rename(val preset: PresetEntity) : NameDialog
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -111,6 +126,23 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
             .collect { vm.loadNextPage() }
     }
 
+    // Quick-return bar: saved with the screen, so it comes back as it was left with the list.
+    val barState = rememberTopAppBarState()
+    val barScroll = remember(barState, listState) { QuickReturnConnection(barState, listState) }
+
+    // A new search (button, IME, sheet, preset, first-page retry) starts at page 0 with nothing
+    // shown: jump to the top and bring the bar back. drop(1) skips the value seen on (re)entry.
+    LaunchedEffect(listState) {
+        snapshotFlow { state.loading && state.page == 0 }
+            .distinctUntilChanged()
+            .drop(1)
+            .filter { it }
+            .collect {
+                barState.heightOffset = 0f
+                listState.scrollToItem(0)
+            }
+    }
+
     fun search() {
         focus.clearFocus()
         vm.runSearch()
@@ -121,13 +153,35 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.systemBarsIgnoringVisibility,
+        topBar = {
+            // Slid by a graphicsLayer translation (draw phase only), so its layout height, and with
+            // it the list's top padding, stays constant: scrolling never recomposes the list.
+            Box(
+                Modifier
+                    .onSizeChanged { barState.heightOffsetLimit = -it.height.toFloat() }
+                    .graphicsLayer { translationY = barState.heightOffset }
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.background)
+                    .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
+                    .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 10.dp),
+            ) {
+                SearchBar(
+                    text = text,
+                    filterCount = activeFilterCount(state.query),
+                    onText = { text = it; vm.setQuery(state.query.copy(anyField = it)) },
+                    onSearch = ::search,
+                    onFilters = { focus.clearFocus(); showFilters = true },
+                )
+            }
+        },
     ) { inner ->
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().nestedScroll(barScroll),
             contentPadding = PaddingValues(
                 start = 12.dp, end = 12.dp,
-                top = inner.calculateTopPadding() + 12.dp,
+                // The bar's own bottom padding gives the 10 dp gap above the first item.
+                top = inner.calculateTopPadding(),
                 bottom = inner.calculateBottomPadding() + 24.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -147,15 +201,6 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
                     onUpdate = vm::updatePresetFromCurrent,
                     onDelete = vm::deletePreset,
                     onReorder = vm::reorderPresets,
-                )
-            }
-            item(key = "search", contentType = "search") {
-                SearchBar(
-                    text = text,
-                    filterCount = activeFilterCount(state.query),
-                    onText = { text = it; vm.setQuery(state.query.copy(anyField = it)) },
-                    onSearch = ::search,
-                    onFilters = { focus.clearFocus(); showFilters = true },
                 )
             }
             if (state.works.isEmpty()) {
@@ -219,6 +264,37 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
                 }
             },
         )
+    }
+}
+
+/**
+ * Quick-return behaviour for the search bar, which overlays the list: the bar moves by exactly what
+ * the list scrolled (so it follows the finger and re-enters on any upward scroll), pulling past the
+ * top always reveals it, and when a gesture or fling ends half-way it settles to shown or hidden.
+ * Unlike enterAlwaysScrollBehavior it consumes nothing, so the list keeps scrolling underneath and
+ * its padding never changes.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+private class QuickReturnConnection(
+    private val bar: TopAppBarState,
+    private val list: LazyListState,
+) : NestedScrollConnection {
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+        val dy = consumed.y + available.y.coerceAtLeast(0f)
+        if (dy != 0f) bar.heightOffset += dy
+        return Offset.Zero
+    }
+
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+        val limit = bar.heightOffsetLimit
+        val offset = bar.heightOffset
+        if (offset < 0f && offset > limit) {
+            // Never settle hidden while the top of the list is still under the bar's slot.
+            val nearTop = list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset < -limit
+            val target = if (!nearTop && offset < limit / 2) limit else 0f
+            animate(offset, target) { v, _ -> bar.heightOffset = v }
+        }
+        return Velocity.Zero
     }
 }
 
