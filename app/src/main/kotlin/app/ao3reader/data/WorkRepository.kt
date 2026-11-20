@@ -23,6 +23,9 @@ interface ChapterSource {
     fun prefetch(workId: Long, ref: ChapterRef)
 }
 
+/** An Ok response that has no chapter text (e.g. AO3's sign-in page for a registered-users-only work). */
+class NotAChapterPageException : IllegalStateException("not a chapter page")
+
 class WorkRepository(
     private val fetcher: Fetcher,
     private val cache: ChapterCache,
@@ -58,7 +61,7 @@ class WorkRepository(
         val r = fetcher.get(Ao3Urls.chapter(workId, ref.chapterId))
         if (r !is FetchResult.Ok) return Loaded.Error(r)
         val parsed = parseValid(r.html, workId)
-            ?: return Loaded.Error(FetchResult.Failed(IllegalStateException("not a chapter page")))
+            ?: return Loaded.Error(FetchResult.Failed(NotAChapterPageException()))
         withContext(ioDispatcher) { try { cache.put(workId, key, r.html) } catch (_: IOException) {} }
         return Loaded.Ok(parsed)
     }

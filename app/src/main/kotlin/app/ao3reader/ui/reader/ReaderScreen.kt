@@ -339,8 +339,11 @@ private fun ChapterText(
         }
     }
     LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
-            .collect { (i, o) -> report?.invoke(i, o) }
+        // Emits once per item / SCROLL_BUCKET_PX while scrolling, plus the exact resting position
+        // when a scroll ends, instead of every frame; the values reported are always exact.
+        snapshotFlow {
+            scrollKey(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, listState.isScrollInProgress)
+        }.collect { report?.invoke(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) }
     }
 
     val text = MaterialTheme.colorScheme.onBackground
@@ -429,7 +432,7 @@ private fun ErrorMessage(error: FetchResult, onRetry: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            if (error is FetchResult.Blocked) "AO3 is blocking requests right now." else "Couldn't load this chapter.",
+            readerErrorText(error),
             style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(12.dp))
