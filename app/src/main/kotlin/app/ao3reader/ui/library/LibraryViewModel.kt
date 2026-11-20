@@ -47,7 +47,7 @@ import okhttp3.HttpUrl
 
 /** What the library screen needs from [LibraryRepository] and the session (a seam for tests). */
 interface LibrarySource {
-    /** The signed-in account (lowercased username), or null when signed out. */
+    /** The acting account (lowercased; see [Session.actingAccount]), or null when there is none. */
     val account: Flow<String?>
     fun cached(section: LibrarySection, page: Int): Flow<LibraryPage?>
     suspend fun load(section: LibrarySection, page: Int): Loaded<LibraryPage>
@@ -57,9 +57,7 @@ interface LibrarySource {
 fun LibraryRepository.asLibrarySource(session: Session): LibrarySource {
     val repo = this
     return object : LibrarySource {
-        override val account: Flow<String?> = session.state
-            .map { s -> s.username?.takeIf { s.signedIn && it.isNotBlank() }?.lowercase() }
-            .distinctUntilChanged()
+        override val account: Flow<String?> = session.actingAccount.map { it?.lowercase() }.distinctUntilChanged()
         override fun cached(section: LibrarySection, page: Int) = repo.cached(section, page)
         override suspend fun load(section: LibrarySection, page: Int) = repo.load(section, page)
         override suspend fun subscriptions(page: Int) = repo.subscriptions(page)
@@ -108,6 +106,8 @@ data class SectionState(
     val failedPage: Int? = null,
     /** Page 1 came from the network at least once: an empty list really is empty. */
     val loaded: Boolean = false,
+    /** Bumped whenever page 1 replaces the list (cache or network), so the screen can show new top items. */
+    val replaceId: Int = 0,
 ) {
     val isEmpty: Boolean get() = works.isEmpty() && subs.isEmpty()
 }
@@ -127,12 +127,17 @@ const val SIGN_IN_TO_SEE_LIBRARY = "Sign in to see your library"
 
 fun isNotSignedIn(e: FetchResult): Boolean = e is FetchResult.Failed && e.cause is NotSignedInException
 
-/** Search's error copy, plus the signed-out case. */
-fun libraryErrorMessage(e: FetchResult): String = if (isNotSignedIn(e)) SIGN_IN_TO_SEE_LIBRARY else errorMessage(e)
+/**
+ * Search's error copy. Errors only show while an account acts (otherwise the sign-in prompt shows), so
+ * a NotSignedIn result there is a failed silent re-login: a plain, retryable error.
+ */
+fun libraryErrorMessage(e: FetchResult): String = errorMessage(e)
 
-/** Only https AO3 links open a work list. */
-internal fun ao3LinkOrNull(url: HttpUrl): HttpUrl? =
-    url.takeIf { it.scheme == "https" && it.host == "archiveofourown.org" }
+/** Only https AO3 series and author pages (default port) open a work list. */
+internal fun ao3LinkOrNull(url: HttpUrl): HttpUrl? = url.takeIf {
+    it.scheme == "https" && it.host == "archiveofourown.org" && it.port == 443 &&
+        (it.encodedPath.startsWith("/series/") || it.encodedPath.startsWith("/users/"))
+}
 
 internal fun visitedLine(r: ReadingExtra?): String? {
     if (r == null) return null
@@ -168,13 +173,13 @@ class LibraryViewModel(
     init {
         viewModelScope.launch {
             source.account.distinctUntilChanged().collect { account ->
-                if (account != null && account != shownAccount) {
+                if (account != shownAccount) {
+                    // Another account, or none (signed out, or stored credentials rejected): nothing
+                    // shown or in flight belongs to it. Signing back in starts the tabs afresh.
                     shownAccount = account
                     LibrarySection.entries.forEach(::discard)
                     started.clear()
-                    _state.update { it.copy(signedIn = true, sections = FRESH) }
-                } else {
-                    _state.update { it.copy(signedIn = account != null) }
+                    _state.update { it.copy(signedIn = account != null, sections = FRESH) }
                 }
                 if (account != null) ensureStarted(_state.value.selected)
             }
@@ -219,6 +224,7 @@ class LibraryViewModel(
     }
 
     fun loadNextPage(section: LibrarySection) {
+        if (!_state.value.signedIn) return
         val s = section(section)
         if (s.loading || !s.hasNext || s.error != null || s.page == 0) return
         startNext(section, s.page + 1)
@@ -226,6 +232,7 @@ class LibraryViewModel(
 
     /** Repeats the request that failed (page 1 or a next page). */
     fun retry(section: LibrarySection) {
+        if (!_state.value.signedIn) return
         val s = section(section)
         val p = s.failedPage ?: return
         if (s.loading) return
@@ -244,7 +251,7 @@ class LibraryViewModel(
                 if (cached != null && gen == generations[section.ordinal] && section(section).isEmpty) {
                     updateSection(section) {
                         it.copy(works = cached.works, summaries = cached.summaries, extras = cached.extras,
-                            page = 1, hasNext = cached.hasNext)
+                            page = 1, hasNext = cached.hasNext, replaceId = it.replaceId + 1)
                     }
                 }
             }
@@ -290,7 +297,7 @@ class LibraryViewModel(
             is Loaded.Ok -> {
                 val p = result.value
                 updateSection(section) { s ->
-                    val base = if (replace) SectionState() else s
+                    val base = if (replace) SectionState(replaceId = s.replaceId + 1) else s
                     base.copy(
                         works = base.works + p.works, summaries = base.summaries + p.summaries,
                         extras = base.extras + p.extras, subs = base.subs + p.subs,

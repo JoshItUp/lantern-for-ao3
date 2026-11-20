@@ -50,7 +50,8 @@ fun Session.asAccountSource(onSignedOut: suspend () -> Unit = {}): AccountSource
                 session.signOut()
             } finally {
                 // Even if the logout failed or the caller was cancelled, the account's cached pages go.
-                withContext(NonCancellable) { onSignedOut() }
+                // runCatching: a failure here must not mask signOut's own exception.
+                withContext(NonCancellable) { runCatching { onSignedOut() } }
             }
         }
     }

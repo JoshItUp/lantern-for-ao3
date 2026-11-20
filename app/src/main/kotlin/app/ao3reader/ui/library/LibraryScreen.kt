@@ -41,9 +41,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -139,7 +141,6 @@ fun LibraryScreen(
                 onRefresh = { vm.refresh(selected) },
                 onNextPage = { vm.loadNextPage(selected) },
                 onRetry = { vm.retry(selected) },
-                onAccount = onAccount,
                 onOpenWork = { workId ->
                     val p = state.progressByWork[workId]
                     onOpenWork(workId, p?.chapterId, p?.chapterNumber ?: 1)
@@ -196,7 +197,6 @@ private fun SectionList(
     onRefresh: () -> Unit,
     onNextPage: () -> Unit,
     onRetry: () -> Unit,
-    onAccount: () -> Unit,
     onOpenWork: (Long) -> Unit,
     onOpenWorkList: OpenWorkList,
 ) {
@@ -214,6 +214,18 @@ private fun SectionList(
             .filter { it }
             .collect { onNextPage() }
     }
+    // Page 1 replaced the list (refresh or first load): while the list sits at its very top, keep it
+    // there so new works at the top are seen (the list otherwise stays anchored on the old first card).
+    // Index 0 is the zero-height "top" item, so this holds only at the very top.
+    var seenReplace by remember(listState) { mutableIntStateOf(s.replaceId) }
+    LaunchedEffect(listState) {
+        snapshotFlow { current.replaceId }
+            .filter { it != seenReplace }
+            .collect {
+                seenReplace = it
+                if (listState.firstVisibleItemIndex == 0) listState.requestScrollToItem(0)
+            }
+    }
 
     val bottomInset = WindowInsets.navigationBarsIgnoringVisibility.asPaddingValues().calculateBottomPadding()
     PullToRefreshBox(
@@ -225,23 +237,25 @@ private fun SectionList(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                start = 12.dp, end = 12.dp, top = 10.dp,
+                // The zero-height "top" item plus the item spacing gives the gap above the first card.
+                start = 12.dp, end = 12.dp, top = 0.dp,
                 bottom = bottomInset + bottomBarHeight + 24.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(if (section == LibrarySection.SUBSCRIPTIONS) 8.dp else 10.dp),
         ) {
+            // Always first: anchors the very top, and holds a failed refresh's error above the kept list.
+            item(key = "top", contentType = "top") {
+                if (!s.isEmpty && s.error != null && s.failedPage == 1) ErrorRow(s.error, onRetry)
+            }
             if (s.isEmpty) {
                 item(key = "status", contentType = "status") {
                     when {
-                        s.error != null -> ErrorRow(s.error, onRetry, onAccount)
+                        s.error != null -> ErrorRow(s.error, onRetry)
                         s.loading -> Loading()
                         s.loaded -> Hint(section.emptyText())
                         else -> Unit
                     }
                 }
-            } else if (s.error != null && s.failedPage == 1) {
-                // A failed refresh: the cached list stays, the error sits above it.
-                item(key = "refresh-error", contentType = "status") { ErrorRow(s.error, onRetry, onAccount) }
             }
             if (section == LibrarySection.SUBSCRIPTIONS) {
                 items(s.subs, key = { it.key }, contentType = { "sub" }) { row ->
@@ -273,7 +287,7 @@ private fun SectionList(
             }
             if (!s.isEmpty && ((s.loading && !s.refreshing) || (s.error != null && s.failedPage != 1))) {
                 item(key = "footer", contentType = "status") {
-                    if (s.error != null) ErrorRow(s.error, onRetry, onAccount) else Loading()
+                    if (s.error != null) ErrorRow(s.error, onRetry) else Loading()
                 }
             }
         }
@@ -346,9 +360,9 @@ private fun SignInPrompt(bottomBarHeight: Dp, onAccount: () -> Unit) {
     }
 }
 
+/** Always retryable: with no account the sign-in prompt shows instead of any list. */
 @Composable
-private fun ErrorRow(error: FetchResult, onRetry: () -> Unit, onAccount: () -> Unit) {
-    val signIn = isNotSignedIn(error)
+private fun ErrorRow(error: FetchResult, onRetry: () -> Unit) {
     Column(
         Modifier.fillMaxWidth().padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -359,8 +373,7 @@ private fun ErrorRow(error: FetchResult, onRetry: () -> Unit, onAccount: () -> U
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
-        if (signIn) TextButton(onClick = onAccount) { Text("Sign in") }
-        else TextButton(onClick = onRetry) { Text("Retry") }
+        TextButton(onClick = onRetry) { Text("Retry") }
     }
 }
 

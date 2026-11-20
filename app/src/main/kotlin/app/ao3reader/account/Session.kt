@@ -12,14 +12,21 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -92,6 +99,20 @@ class Session(
      * (Keystore error): the session is live, but it won't be renewed silently when it expires.
      */
     val credentialsSaved: StateFlow<Boolean> = _credentialsSaved.asStateFlow()
+
+    /**
+     * The AO3 account that signed-in calls act as: the signed-in name, or (while the session has merely
+     * lapsed) the stored account, which [authedGet] can renew silently. Null once there is nothing to act
+     * as: signed out, never signed in, or stored credentials rejected ([needsSignIn]).
+     */
+    val actingAccount: StateFlow<String?> = DerivedStateFlow(::computeActingAccount, merge(_state, _needsSignIn, _credentialsSaved))
+
+    private fun computeActingAccount(): String? {
+        val s = _state.value
+        val stored = { (store.displayName() ?: store.username())?.takeIf { it.isNotBlank() } }
+        if (s.signedIn) return s.username?.takeIf { it.isNotBlank() } ?: stored()
+        return if (accountKnown && _credentialsSaved.value && !_needsSignIn.value) stored() else null
+    }
 
     private val reloginLock = Mutex()
     /** Guarded by [reloginLock]. */
@@ -437,5 +458,16 @@ class Session(
             for (o in overrides) if (o.first !in placed) out += o
             return out
         }
+    }
+}
+
+/** A read-only StateFlow whose value is computed on read; [changes] signals when to recompute for collectors. */
+@OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+private class DerivedStateFlow<T>(private val compute: () -> T, private val changes: Flow<*>) : StateFlow<T> {
+    override val value: T get() = compute()
+    override val replayCache: List<T> get() = listOf(value)
+    override suspend fun collect(collector: FlowCollector<T>): Nothing {
+        changes.map { compute() }.distinctUntilChanged().collect(collector)
+        awaitCancellation()
     }
 }

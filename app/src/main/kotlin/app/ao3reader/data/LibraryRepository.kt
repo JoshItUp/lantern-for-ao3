@@ -41,7 +41,7 @@ class LibraryRepository(
         if (page != 1 || section == LibrarySection.SUBSCRIPTIONS) return flowOf(null)
         val dao = db.libraryPageDao()
         // Follows the signed-in account: another account never sees these rows.
-        return session.state.map { cacheKey() }.distinctUntilChanged().flatMapLatest { user ->
+        return session.actingAccount.map { it?.lowercase() }.distinctUntilChanged().flatMapLatest { user ->
             if (user == null) flowOf(null)
             else dao.observe(user, section.name, page).distinctUntilChanged().map { row -> if (row == null) null else user to row }
         }.map { hit ->
@@ -72,6 +72,8 @@ class LibraryRepository(
         }
         val r = session.authedGet(url)
         if (r !is FetchResult.Ok) return Loaded.Error(r)
+        // A signed-out page (re-login impossible or failed) parses as an empty or public-only list: never show or cache it.
+        if (!session.state.value.signedIn) return notSignedIn()
         val parsed = withContext(parseDispatcher) {
             if (section == LibrarySection.BOOKMARKS) LibraryParser.bookmarks(r.html, page)
             else LibraryParser.readings(r.html, page)
@@ -95,15 +97,15 @@ class LibraryRepository(
         val user = username() ?: return notSignedIn()
         val r = session.authedGet(Ao3Urls.subscriptions(user, page))
         if (r !is FetchResult.Ok) return Loaded.Error(r)
+        if (!session.state.value.signedIn) return notSignedIn()
         return Loaded.Ok(withContext(parseDispatcher) { LibraryParser.subscriptions(r.html, page, r.finalUrl) })
     }
 
     /** Drops every cached page (on sign-out). Read marks are kept: they are about works, not the account. */
     suspend fun clear() = withContext(ioDispatcher) { db.libraryPageDao().clear() }
 
-    private fun username(): String? = session.state.value.takeIf { it.signedIn }?.username?.takeIf { it.isNotBlank() }
-
-    private fun cacheKey(): String? = username()?.lowercase()
+    /** The acting account, so a lapsed session still reaches [Session.authedGet] and its silent re-login. */
+    private fun username(): String? = session.actingAccount.value
 
     private fun notSignedIn() = Loaded.Error(FetchResult.Failed(NotSignedInException()))
 }
