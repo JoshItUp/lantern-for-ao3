@@ -24,6 +24,10 @@ class ChapterCache(
     fun get(workId: Long, chapterKey: String): String? = synchronized(lock) {
         val f = file(workId, chapterKey)
         if (!f.isFile) return null
+        if (clock() - f.lastModified() > maxAgeMs) {
+            f.delete()
+            return null
+        }
         val text = try { f.readText() } catch (e: java.io.IOException) { return null }
         f.setLastModified(clock())
         text
