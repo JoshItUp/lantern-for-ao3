@@ -7,3 +7,7 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+
+# Planning/agent working files (kept locally, not committed)
+docs/
+.superpowers/
