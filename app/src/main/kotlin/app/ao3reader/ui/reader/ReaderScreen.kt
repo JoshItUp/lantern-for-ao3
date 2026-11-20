@@ -98,17 +98,28 @@ private const val FLING_VELOCITY_DP = 800f
 /** Resistance applied to drags that can't change chapter (first/last). */
 private const val EDGE_RESISTANCE = 0.2f
 
-/** [leaving]: the screen is being popped (a back gesture in progress); the system bars come back at once. */
+/**
+ * [onBack] pops the reader. Back is handled here with a plain (non-predictive) callback, so there is
+ * no gesture-following preview: the bars come back first, then the pop plays on release.
+ */
 @Composable
-fun ReaderScreen(vm: ReaderViewModel, leaving: Boolean = false) {
+fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
     val s by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     var showFontSheet by rememberSaveable { mutableStateOf(false) }
 
-    ImmersiveMode(hidden = !s.controlsVisible && !leaving)
+    val bars = ImmersiveMode(hidden = !s.controlsVisible)
     FlushOnStop(vm)
-    BackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
+    // One handler: an open chapter drawer closes first; otherwise restore the bars, then leave.
+    BackHandler {
+        if (drawer.isOpen) {
+            scope.launch { drawer.close() }
+        } else {
+            bars?.show(WindowInsetsCompat.Type.systemBars())
+            onBack()
+        }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawer,
@@ -426,9 +437,12 @@ private fun ErrorMessage(error: FetchResult, onRetry: () -> Unit) {
     }
 }
 
-/** Hides the system bars while [hidden]; always restores them when the reader leaves composition. */
+/**
+ * Hides the system bars while [hidden]; always restores them when the reader leaves composition.
+ * Returns the controller so back can show the bars before the pop starts.
+ */
 @Composable
-private fun ImmersiveMode(hidden: Boolean) {
+private fun ImmersiveMode(hidden: Boolean): WindowInsetsControllerCompat? {
     val view = LocalView.current
     val window = remember(view) { view.context.findActivity()?.window }
     val controller = remember(window) { window?.let { WindowCompat.getInsetsController(it, view) } }
@@ -440,6 +454,7 @@ private fun ImmersiveMode(hidden: Boolean) {
         if (hidden) controller?.hide(WindowInsetsCompat.Type.systemBars())
         else controller?.show(WindowInsetsCompat.Type.systemBars())
     }
+    return controller
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {

@@ -1,6 +1,5 @@
 package app.ao3reader.ui
 
-import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -39,7 +38,8 @@ private const val ENTER_MS = 220
 private const val EXIT_MS = 200
 private const val UNDER_MS = 150
 private const val SCALE_FROM = 0.96f
-/** Back: the screen underneath starts almost opaque, so it reads as "already there". */
+/** Back: the screen underneath starts almost opaque and finishes quickly, so it reads as "already there". */
+private const val POP_UNDER_MS = 100
 private const val UNDER_ALPHA_FROM = 0.9f
 /** Back: the leaving screen only fades lightly while it slides away. */
 private const val EXIT_ALPHA_TO = 0.6f
@@ -56,10 +56,11 @@ fun AppNav(container: AppContainer) {
                 scaleIn(tween(ENTER_MS, easing = FastOutSlowInEasing), initialScale = SCALE_FROM)
         },
         exitTransition = { fadeOut(tween(UNDER_MS, easing = FastOutSlowInEasing)) },
-        // Back: the leaving screen slides out to the right (predictive back seeks this with the
-        // finger), the one beneath is simply revealed. No scale, so nothing sits "zoomed out".
+        // Back: the leaving screen slides out to the right, the one beneath is simply revealed.
+        // No scale. The reader handles back itself (non-predictive), so this plays on release
+        // rather than being seeked with the finger.
         popEnterTransition = {
-            fadeIn(tween(UNDER_MS, easing = FastOutSlowInEasing), initialAlpha = UNDER_ALPHA_FROM)
+            fadeIn(tween(POP_UNDER_MS, easing = FastOutSlowInEasing), initialAlpha = UNDER_ALPHA_FROM)
         },
         popExitTransition = {
             slideOutHorizontally(tween(EXIT_MS, easing = FastOutSlowInEasing)) { it } +
@@ -85,10 +86,9 @@ fun AppNav(container: AppContainer) {
             val chapterId = args?.getString(Routes.ARG_CHAPTER_ID)?.toLongOrNull()
             val number = args?.getInt(Routes.ARG_NUMBER) ?: 1
             val vm: ReaderViewModel = viewModel(factory = ReaderViewModel.factory(container, workId, chapterId, number))
-            // True from the moment a back gesture (or any pop) starts until it is cancelled, so the
-            // reader can bring the system bars back before the pop rather than after it.
-            val leaving = transition.targetState == EnterExitState.PostExit
-            ReaderScreen(vm, leaving)
+            // Only pop while this entry is on top: a second back during the exit animation must
+            // not pop the search screen as well.
+            ReaderScreen(vm, onBack = { if (nav.currentBackStackEntry?.id == entry.id) nav.popBackStack() })
         }
     }
 }
