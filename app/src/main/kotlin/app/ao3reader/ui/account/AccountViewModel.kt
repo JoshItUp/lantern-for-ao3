@@ -14,6 +14,7 @@ import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.ao3.parse.AccountState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** What the account screen needs from [Session] (a seam for tests). */
 interface AccountSource {
@@ -32,7 +34,10 @@ interface AccountSource {
     suspend fun signOut()
 }
 
-/** [onSignedOut] runs after an explicit sign-out (not when a session merely lapses). */
+/**
+ * [onSignedOut] runs after an explicit sign-out (not when a session merely lapses), even when the
+ * sign-out threw or was cancelled.
+ */
 fun Session.asAccountSource(onSignedOut: suspend () -> Unit = {}): AccountSource {
     val session = this
     return object : AccountSource {
@@ -41,8 +46,12 @@ fun Session.asAccountSource(onSignedOut: suspend () -> Unit = {}): AccountSource
         override val credentialsSaved get() = session.credentialsSaved
         override suspend fun signIn(username: String, password: String) = session.signIn(username, password)
         override suspend fun signOut() {
-            session.signOut()
-            onSignedOut()
+            try {
+                session.signOut()
+            } finally {
+                // Even if the logout failed or the caller was cancelled, the account's cached pages go.
+                withContext(NonCancellable) { onSignedOut() }
+            }
         }
     }
 }

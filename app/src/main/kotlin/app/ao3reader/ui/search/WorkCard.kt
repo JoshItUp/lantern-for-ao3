@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -50,6 +51,8 @@ fun WorkCard(
     badge: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Extra lines at the bottom of the card (Library: visits, bookmark notes). */
+    extras: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val meta = remember(work) {
@@ -113,12 +116,13 @@ fun WorkCard(
                 )
             }
             if (stats.isNotEmpty()) Text(stats, style = MaterialTheme.typography.labelSmall, color = muted)
+            extras?.invoke(this)
         }
     }
 }
 
 @Composable
-private fun Tags(tags: List<String>, color: Color, emphasized: Boolean) {
+internal fun Tags(tags: List<String>, color: Color, emphasized: Boolean) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         for (t in tags) {
             Text(

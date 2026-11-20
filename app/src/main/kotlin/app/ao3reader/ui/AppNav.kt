@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import android.net.Uri
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -46,12 +47,16 @@ import app.ao3reader.AppContainer
 import app.ao3reader.ui.account.AccountScreen
 import app.ao3reader.ui.account.AccountViewModel
 import app.ao3reader.ui.common.AppIcons
-import app.ao3reader.ui.library.LibraryPlaceholder
+import app.ao3reader.ui.library.LibraryScreen
+import app.ao3reader.ui.library.LibraryViewModel
+import app.ao3reader.ui.library.WorkListPlaceholder
+import app.ao3reader.ui.library.ao3LinkOrNull
 import app.ao3reader.ui.reader.ReaderScreen
 import app.ao3reader.ui.reader.ReaderViewModel
 import app.ao3reader.ui.search.SearchScreen
 import app.ao3reader.ui.search.SearchViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
+import okhttp3.HttpUrl
 
 object Routes {
     const val SEARCH = "search"
@@ -70,6 +75,18 @@ object Routes {
 
     fun reader(workId: Long, chapterId: Long?, number: Int): String =
         "reader/$workId?$ARG_NUMBER=$number" + (chapterId?.let { "&$ARG_CHAPTER_ID=$it" } ?: "")
+
+    const val ARG_URL = "url"
+    const val ARG_TITLE = "title"
+
+    /** A series' or author's works, in the app. Both arguments are URL-encoded strings. */
+    const val WORK_LIST = "worklist?$ARG_URL={$ARG_URL}&$ARG_TITLE={$ARG_TITLE}"
+
+    /** Null unless [url] is an https archiveofourown.org link: nothing else is ever loaded. */
+    fun workList(url: HttpUrl, title: String): String? {
+        val safe = ao3LinkOrNull(url) ?: return null
+        return "worklist?$ARG_URL=${Uri.encode(safe.toString())}&$ARG_TITLE=${Uri.encode(title)}"
+    }
 }
 
 /** Short screen transitions (the NavHost default is a ~700 ms crossfade). */
@@ -155,9 +172,29 @@ fun AppNav(container: AppContainer) {
                 }
             }
             composable(Routes.LIBRARY) {
-                // Placeholder until the real library screen replaces it.
-                val account by container.session.state.collectAsStateWithLifecycle()
-                LibraryPlaceholder(account.signedIn, BottomBarHeight, onAccount = ::openAccount)
+                val vm: LibraryViewModel = viewModel(factory = LibraryViewModel.factory(container))
+                LibraryScreen(
+                    vm,
+                    bottomBarHeight = BottomBarHeight,
+                    onAccount = ::openAccount,
+                    onOpenWork = { workId, chapterId, number ->
+                        nav.navigate(Routes.reader(workId, chapterId, number)) { launchSingleTop = true }
+                    },
+                    onOpenWorkList = { url, title ->
+                        Routes.workList(url, title)?.let { nav.navigate(it) { launchSingleTop = true } }
+                    },
+                )
+            }
+            composable(
+                Routes.WORK_LIST,
+                arguments = listOf(
+                    navArgument(Routes.ARG_URL) { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument(Routes.ARG_TITLE) { type = NavType.StringType; defaultValue = "" },
+                ),
+            ) { e ->
+                // Placeholder until the work-list screen lands (plan 2, task 8b).
+                val title = e.arguments?.getString(Routes.ARG_TITLE).orEmpty()
+                WorkListPlaceholder(title, onBack = { if (nav.currentBackStackEntry?.id == e.id) nav.popBackStack() })
             }
             composable(Routes.ACCOUNT) { e ->
                 val vm: AccountViewModel = viewModel(factory = AccountViewModel.factory(container))
