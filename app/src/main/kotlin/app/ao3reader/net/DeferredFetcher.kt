@@ -13,8 +13,12 @@ import okhttp3.HttpUrl
 class DeferredFetcher(create: () -> Fetcher) : Fetcher {
     private val delegate = lazy(create)
 
-    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean): FetchResult {
-        val f = if (delegate.isInitialized()) delegate.value else withContext(Dispatchers.IO) { delegate.value }
-        return f.get(url, accept, interactive)
-    }
+    private suspend fun delegate(): Fetcher =
+        if (delegate.isInitialized()) delegate.value else withContext(Dispatchers.IO) { delegate.value }
+
+    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean): FetchResult =
+        delegate().get(url, accept, interactive, anonymous)
+
+    override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?): FetchResult =
+        delegate().post(url, fields, accept)
 }

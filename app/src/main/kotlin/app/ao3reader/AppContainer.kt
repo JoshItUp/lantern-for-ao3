@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import app.ao3reader.data.db.AppDatabase
+import app.ao3reader.net.AnonymousCookieInterceptor
 import app.ao3reader.net.DeferredFetcher
 import app.ao3reader.net.PersistentCookieJar
 import app.ao3reader.net.cachedUserAgent
@@ -40,6 +41,8 @@ class AppContainer(val context: Context) {
     val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .cookieJar(PersistentCookieJar { CookieManager.getInstance() })
+            // Network level: runs after the bridge adds the jar's cookies and before it stores new ones.
+            .addNetworkInterceptor(AnonymousCookieInterceptor())
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .cache(Cache(File(context.cacheDir, "http"), 10L * 1024 * 1024))

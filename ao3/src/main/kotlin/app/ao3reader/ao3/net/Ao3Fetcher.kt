@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
@@ -37,13 +38,46 @@ class Ao3Fetcher(
 
     private class Raw(val code: Int, val headers: Headers, val body: String, val finalUrl: HttpUrl)
 
-    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean): FetchResult = mutex.withLock {
+    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean): FetchResult =
+        fetch(url, interactive = interactive, resendAfterSolve = true) {
+            Request.Builder().url(url).headers(accept).apply {
+                if (anonymous) tag(Anonymous::class.java, Anonymous)
+            }.build()
+        }
+
+    override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?): FetchResult =
+        // A solved challenge is not followed by a resubmit: the form's authenticity token may be stale,
+        // and resending a non-idempotent request is never safe. The caller re-GETs the form instead.
+        fetch(url, interactive = true, resendAfterSolve = false) {
+            val body = FormBody.Builder().apply { fields.forEach { (k, v) -> add(k, v) } }.build()
+            Request.Builder().url(url).headers(accept).post(body).build()
+        }
+
+    private fun Request.Builder.headers(accept: String?): Request.Builder = apply {
+        header("User-Agent", userAgent)
+        if (accept != null) {
+            header("Accept", accept)
+            header("X-Requested-With", "XMLHttpRequest")
+        }
+    }
+
+    /**
+     * The shared loop for every request: one lock, one spacing clock, the challenge rule (solve at most
+     * once; resend afterwards only when [resendAfterSolve]) and the 429 rule (one wait of at most
+     * [MAX_RETRY_WAIT_SEC], and none at all when not [interactive]).
+     */
+    private suspend fun fetch(
+        url: HttpUrl,
+        interactive: Boolean,
+        resendAfterSolve: Boolean,
+        build: () -> Request,
+    ): FetchResult = mutex.withLock {
         var rateRetried = false
         var solved = false
         // Bounded: each branch that loops sets a once-only flag first.
         while (true) {
             val raw = try {
-                request(url, accept)
+                request(build())
             } catch (e: CancellationException) {
                 throw e
             } catch (e: IOException) {
@@ -61,9 +95,9 @@ class Ao3Fetcher(
                 } catch (e: Exception) {
                     false
                 }
-                if (!ok) return@withLock FetchResult.Blocked
-                // The solver just loaded a page itself: space the retry from that load, not from ours.
-                lastStart = clock()
+                // The solver just loaded a page itself: space the next request from that load, not from ours.
+                if (ok) lastStart = clock()
+                if (!ok || !resendAfterSolve) return@withLock FetchResult.Blocked
                 continue
             }
 
@@ -73,7 +107,10 @@ class Ao3Fetcher(
                 raw.code == 429 -> {
                     val sec = raw.headers["Retry-After"]?.trim()?.toLongOrNull()
                         ?.takeIf { it >= 0 } ?: DEFAULT_RETRY_AFTER_SEC
-                    if (rateRetried || sec > MAX_RETRY_WAIT_SEC) return@withLock FetchResult.RateLimited(sec)
+                    // Background work never sleeps holding the lock: the user's own requests queue behind it.
+                    if (rateRetried || !interactive || sec > MAX_RETRY_WAIT_SEC) {
+                        return@withLock FetchResult.RateLimited(sec)
+                    }
                     rateRetried = true
                     sleep(sec * 1000)
                     continue
@@ -85,18 +122,12 @@ class Ao3Fetcher(
         error("unreachable")
     }
 
-    private suspend fun request(url: HttpUrl, accept: String?): Raw {
+    private suspend fun request(req: Request): Raw {
         lastStart?.let { last ->
             val wait = minIntervalMs - (clock() - last)
             if (wait > 0) sleep(wait)
         }
         lastStart = clock()
-        val req = Request.Builder().url(url).header("User-Agent", userAgent).apply {
-            if (accept != null) {
-                header("Accept", accept)
-                header("X-Requested-With", "XMLHttpRequest")
-            }
-        }.build()
         return client.newCall(req).await()
     }
 
