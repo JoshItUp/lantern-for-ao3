@@ -45,6 +45,12 @@ class SignInFlowException(message: String) : Exception(message)
 class SessionRenewedException : Exception("session renewed; fetch the form again")
 
 /**
+ * The cause of `SignInResult.Error(FetchResult.Failed(...))` when a [Session.signOut] (or a newer
+ * [Session.signIn]) started while this sign-in was in progress: nothing was written, the newer call wins.
+ */
+class SessionSupersededException : Exception("superseded by a newer sign-in or sign-out")
+
+/**
  * The owner's AO3 session. [fetcher] must be the chain WITHOUT the [ObservingFetcher]: Session reads
  * account state from its own responses.
  *
@@ -54,7 +60,9 @@ class SessionRenewedException : Exception("session renewed; fetch the form again
  * - Rejected credentials are kept, [needsSignIn] turns true and nothing is tried silently until the
  *   owner signs in again (or a signed-in page is seen).
  * - Any other failure (Blocked, RateLimited, network, odd page) pauses silent attempts for
- *   [PAUSE_MS] or until a signed-in page is seen.
+ *   [PAUSE_MS] or until a signed-in page is seen. A Blocked from a background (non-interactive)
+ *   attempt pauses only background callers: an interactive caller may still try (and one that
+ *   joined such an attempt starts its own interactive one, once).
  * - [signIn] and [signOut] supersede an in-flight re-login (cancelled; a late result is discarded).
  */
 class Session(
@@ -87,27 +95,41 @@ class Session(
 
     private val reloginLock = Mutex()
     /** Guarded by [reloginLock]. */
-    private var inFlight: Deferred<Boolean>? = null
+    private var inFlight: Deferred<Outcome>? = null
     /** Bumped on every successful login, so a request that started before it retries instead of logging in again. */
     private val generation = AtomicLong()
     /** Bumped by [signIn] and [signOut]: a login started under an older epoch is discarded. */
     private val epoch = AtomicLong()
-    /** Silent re-login is paused until this clock time after a failure that wasn't a rejection. */
-    @Volatile private var pausedUntil = 0L
+    /** Silent re-login pause after a failure that wasn't a rejection; null when not paused. */
+    @Volatile private var pause: Pause? = null
+
+    private class Pause(val until: Long, val backgroundOnly: Boolean)
+
+    /** What [login] found: the result, and the signed-in account on success. Nothing is written by [login]. */
+    private class Attempt(val result: SignInResult, val account: AccountState? = null)
+
+    private enum class Outcome { OK, REJECTED, FAILED, BACKGROUND_BLOCKED }
 
     suspend fun signIn(username: String, password: String): SignInResult {
         val ep = supersede()
-        val result = login(username, password, verify = true, expectedName = username, interactive = true, ep = ep)
+        val attempt = login(username, password, verify = true, expectedName = username, interactive = true)
+        val result = attempt.result
         when (result) {
             SignInResult.Ok -> {
-                val name = _state.value.username ?: username
-                val saved = reloginLock.withLock {
+                val account = attempt.account!!
+                // Every write happens under the lock and only if no signOut/signIn started meanwhile.
+                val committed = reloginLock.withLock {
                     if (epoch.get() != ep) return@withLock false
-                    withContext(io) { saveCredentials(username, password, name) }
+                    withContext(NonCancellable + io) {
+                        commitLoggedIn(account)
+                        val saved = saveCredentials(username, password, account.username ?: username)
+                        accountKnown = true
+                        _credentialsSaved.value = saved
+                        _needsSignIn.value = false
+                    }
+                    true
                 }
-                accountKnown = true
-                _credentialsSaved.value = saved
-                _needsSignIn.value = false
+                if (!committed) return SignInResult.Error(FetchResult.Failed(SessionSupersededException()))
             }
             is SignInResult.Rejected -> if (epoch.get() == ep) _state.value = SIGNED_OUT
             is SignInResult.Error -> Unit
@@ -148,7 +170,7 @@ class Session(
             _state.value = SIGNED_OUT
             _needsSignIn.value = false
             _credentialsSaved.value = false
-            pausedUntil = 0L
+            pause = null
         }
     }
 
@@ -185,14 +207,14 @@ class Session(
         if (!accountKnown) return
         _state.value = s
         _needsSignIn.value = false
-        pausedUntil = 0L
+        pause = null
     }
 
     private suspend fun authed(interactive: Boolean, isPost: Boolean, request: suspend () -> FetchResult): FetchResult {
         var gen = generation.get()
         var relogged = false
         // The state already says signed out (observed elsewhere): log in before the request, not after.
-        if (!_state.value.signedIn && canRelogin()) {
+        if (!_state.value.signedIn && canRelogin(interactive)) {
             relogged = true
             relogin(gen, interactive)
             gen = generation.get()
@@ -200,7 +222,7 @@ class Session(
         val first = request()
         if (!showsSignedOut(first)) return first
         _state.value = SIGNED_OUT
-        if (relogged || !canRelogin() || !relogin(gen, interactive)) return first
+        if (relogged || !canRelogin(interactive) || !relogin(gen, interactive)) return first
         if (isPost) return FetchResult.Failed(SessionRenewedException())
         val second = request()
         // Read the state from the retry, but never log in again in this call.
@@ -216,60 +238,85 @@ class Session(
         return !s.signedIn
     }
 
-    private fun canRelogin(): Boolean =
-        !_needsSignIn.value && clock() >= pausedUntil && store.username() != null
+    private fun canRelogin(interactive: Boolean): Boolean {
+        val p = pause
+        val paused = p != null && clock() < p.until && !(interactive && p.backgroundOnly)
+        return !_needsSignIn.value && !paused && store.username() != null
+    }
 
-    /** Shares one in-flight re-login. True when signed in again (by this attempt or one since [gen]). */
+    /**
+     * Shares one in-flight re-login. True when signed in again (by this attempt or one since [gen]).
+     * An interactive caller whose shared attempt was a background one that ended Blocked starts its own
+     * interactive attempt, once.
+     */
     private suspend fun relogin(gen: Long, interactive: Boolean): Boolean {
-        val attempt = reloginLock.withLock {
-            if (generation.get() != gen) return true
-            if (!canRelogin()) return false
-            inFlight?.takeIf { it.isActive } ?: run {
-                val ep = epoch.get()
-                scope.async { doRelogin(ep, interactive) }
-            }.also { inFlight = it }
-        }
-        return try {
-            attempt.await()
-        } catch (e: CancellationException) {
-            // The attempt was superseded by signIn/signOut; only rethrow if this caller itself was cancelled.
-            currentCoroutineContext().ensureActive()
-            false
+        var ownTry = false
+        while (true) {
+            val attempt = reloginLock.withLock {
+                if (generation.get() != gen) return true
+                if (!canRelogin(interactive)) return false
+                inFlight?.takeIf { it.isActive } ?: run {
+                    val ep = epoch.get()
+                    scope.async { doRelogin(ep, interactive) }
+                }.also { inFlight = it }
+            }
+            val outcome = try {
+                attempt.await()
+            } catch (e: CancellationException) {
+                // The attempt was superseded by signIn/signOut; only rethrow if this caller itself was cancelled.
+                currentCoroutineContext().ensureActive()
+                return false
+            }
+            when (outcome) {
+                Outcome.OK -> return true
+                Outcome.BACKGROUND_BLOCKED -> if (interactive && !ownTry) ownTry = true else return false
+                Outcome.REJECTED, Outcome.FAILED -> return false
+            }
         }
     }
 
-    private suspend fun doRelogin(ep: Long, interactive: Boolean): Boolean = try {
+    private suspend fun doRelogin(ep: Long, interactive: Boolean): Outcome = try {
         val creds = withContext(io) { store.load() }
         if (creds == null) {
-            false
+            Outcome.FAILED
         } else {
             val expected = withContext(io) { store.displayName() } ?: creds.first
-            when (login(creds.first, creds.second, verify = false, expectedName = expected, interactive = interactive, ep = ep)) {
+            val attempt = login(creds.first, creds.second, verify = false, expectedName = expected, interactive = interactive)
+            when (val r = attempt.result) {
                 SignInResult.Ok -> {
-                    val name = _state.value.username
-                    if (name != null && name != expected) {
-                        withContext(io) { runCatching { if (epoch.get() == ep) store.saveDisplayName(name) } }
+                    // Not suspending between the check and the writes: signOut/signIn cancel and join this
+                    // coroutine before bumping the epoch, so a late login can't land after them.
+                    if (epoch.get() != ep) {
+                        Outcome.FAILED
+                    } else {
+                        val account = attempt.account!!
+                        commitLoggedIn(account)
+                        val name = account.username
+                        if (name != null && name != expected) {
+                            withContext(io) { runCatching { if (epoch.get() == ep) store.saveDisplayName(name) } }
+                        }
+                        Outcome.OK
                     }
-                    true
                 }
                 is SignInResult.Rejected -> {
                     if (epoch.get() == ep) {
                         _state.value = SIGNED_OUT
                         _needsSignIn.value = true
                     }
-                    false
+                    Outcome.REJECTED
                 }
                 is SignInResult.Error -> {
-                    if (epoch.get() == ep) pausedUntil = clock() + PAUSE_MS
-                    false
+                    val backgroundBlocked = !interactive && r.result is FetchResult.Blocked
+                    if (epoch.get() == ep) pause = Pause(clock() + PAUSE_MS, backgroundOnly = backgroundBlocked)
+                    if (backgroundBlocked) Outcome.BACKGROUND_BLOCKED else Outcome.FAILED
                 }
             }
         }
     } catch (e: CancellationException) {
         throw e
     } catch (_: Exception) {
-        if (epoch.get() == ep) pausedUntil = clock() + PAUSE_MS
-        false
+        if (epoch.get() == ep) pause = Pause(clock() + PAUSE_MS, backgroundOnly = false)
+        Outcome.FAILED
     }
 
     /**
@@ -284,46 +331,44 @@ class Session(
         verify: Boolean,
         expectedName: String,
         interactive: Boolean,
-        ep: Long,
-    ): SignInResult {
+    ): Attempt {
         var cleared = false
         var reposted = false
         while (true) {
             val page = fetcher.get(Ao3Urls.login(), interactive = interactive)
-            if (page !is FetchResult.Ok) return SignInResult.Error(page)
+            if (page !is FetchResult.Ok) return Attempt(SignInResult.Error(page))
             val already = AccountParser.state(page.html)
             if (already.signedIn) {
-                if (!verify && already.username.equals(expectedName, ignoreCase = true)) return loggedIn(already, ep)
-                if (cleared) return SignInResult.Error(FetchResult.Failed(SignInFlowException("still signed in after clearing cookies")))
+                if (!verify && already.username.equals(expectedName, ignoreCase = true)) return Attempt(SignInResult.Ok, already)
+                if (cleared) return Attempt(SignInResult.Error(FetchResult.Failed(SignInFlowException("still signed in after clearing cookies"))))
                 cleared = true
                 withContext(io) { cookies() }
                 continue
             }
             val form = AccountParser.loginForm(page.html, page.finalUrl)
-                ?: return SignInResult.Error(FetchResult.Failed(SignInFlowException("login form not found")))
+                ?: return Attempt(SignInResult.Error(FetchResult.Failed(SignInFlowException("login form not found"))))
             val posted = fetcher.post(form.action, fillLogin(form.fields, username, password), interactive = interactive)
             if (posted is FetchResult.Blocked && !reposted) {
                 reposted = true
                 continue
             }
-            if (posted !is FetchResult.Ok) return SignInResult.Error(posted)
+            if (posted !is FetchResult.Ok) return Attempt(SignInResult.Error(posted))
             val s = AccountParser.state(posted.html)
-            if (s.signedIn) return loggedIn(s, ep)
+            if (s.signedIn) return Attempt(SignInResult.Ok, s)
             val flash = AccountParser.flashError(posted.html)
-            if (flash != null) return SignInResult.Rejected(flash)
+            if (flash != null) return Attempt(SignInResult.Rejected(flash))
             if (AccountParser.loginForm(posted.html, posted.finalUrl) != null) {
-                return SignInResult.Rejected("AO3 didn't accept the user name or password.")
+                return Attempt(SignInResult.Rejected("AO3 didn't accept the user name or password."))
             }
-            return SignInResult.Error(FetchResult.Failed(SignInFlowException("unexpected page after login")))
+            return Attempt(SignInResult.Error(FetchResult.Failed(SignInFlowException("unexpected page after login"))))
         }
     }
 
-    private fun loggedIn(s: AccountState, ep: Long): SignInResult {
-        if (epoch.get() != ep) return SignInResult.Error(FetchResult.Failed(SignInFlowException("superseded")))
+    /** Callers check the epoch first (under the lock, or with nothing suspending in between). */
+    private fun commitLoggedIn(s: AccountState) {
         _state.value = s
-        pausedUntil = 0L
+        pause = null
         generation.incrementAndGet()
-        return SignInResult.Ok
     }
 
     /** Cancels an in-flight re-login and starts a new epoch; returns it. */
