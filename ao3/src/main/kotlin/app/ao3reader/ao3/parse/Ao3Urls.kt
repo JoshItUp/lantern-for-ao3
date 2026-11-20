@@ -14,6 +14,11 @@ object Ao3Urls {
         return path.toHttpUrl().newBuilder().addQueryParameter("view_adult", "true").build()
     }
 
+    fun login(): HttpUrl = "$BASE/users/login".toHttpUrl()
+
+    /** GET shows a confirmation form; the form (or a DELETE override with the page's CSRF token) logs out. */
+    fun logout(): HttpUrl = "$BASE/users/logout".toHttpUrl()
+
     fun navigate(workId: Long): HttpUrl = "$BASE/works/$workId/navigate".toHttpUrl()
 
     /** kind: fandom | character | relationship | freeform */

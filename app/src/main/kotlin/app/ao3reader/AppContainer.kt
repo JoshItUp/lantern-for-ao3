@@ -4,6 +4,10 @@ import android.content.Context
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import androidx.webkit.WebViewCompat
+import app.ao3reader.account.CredentialStore
+import app.ao3reader.account.ObservingFetcher
+import app.ao3reader.account.Session
+import app.ao3reader.account.keystoreSecretBox
 import app.ao3reader.ao3.net.Ao3Fetcher
 import app.ao3reader.ao3.net.Fetcher
 import androidx.room.Room
@@ -19,6 +23,7 @@ import app.ao3reader.net.AnonymousCookieInterceptor
 import app.ao3reader.net.DeferredFetcher
 import app.ao3reader.net.PersistentCookieJar
 import app.ao3reader.net.cachedUserAgent
+import app.ao3reader.net.clearAo3SessionCookies
 import app.ao3reader.net.WebViewChallengeSolver
 import okhttp3.Cache
 import okhttp3.OkHttpClient
@@ -49,12 +54,16 @@ class AppContainer(val context: Context) {
             .build()
     }
 
-    val fetcher: Fetcher by lazy {
+    /** The network chain without account observation; [session] uses it for its own requests. */
+    private val baseFetcher: Fetcher by lazy {
         DumpingFetcher(
             DeferredFetcher { Ao3Fetcher(okHttpClient, userAgent, WebViewChallengeSolver(context, userAgent)) },
             pageDump(context),
         )
     }
+
+    /** Every signed-in page the app loads updates [session]'s account state (reached lazily: no construction cycle). */
+    val fetcher: Fetcher by lazy { ObservingFetcher(baseFetcher) { html -> session.observe(html) } }
 
     val db: AppDatabase by lazy {
         Room.databaseBuilder(context, AppDatabase::class.java, "ao3reader.db").build()
@@ -65,6 +74,15 @@ class AppContainer(val context: Context) {
     val chapterCache: ChapterCache by lazy { ChapterCache(File(context.cacheDir, "chapters")) }
 
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    val session: Session by lazy {
+        Session(
+            baseFetcher,
+            CredentialStore(context.getSharedPreferences("account", Context.MODE_PRIVATE), keystoreSecretBox()),
+            { clearAo3SessionCookies(CookieManager.getInstance()) },
+            appScope,
+        )
+    }
 
     val searchRepo: SearchRepository by lazy { SearchRepository(fetcher) }
 
