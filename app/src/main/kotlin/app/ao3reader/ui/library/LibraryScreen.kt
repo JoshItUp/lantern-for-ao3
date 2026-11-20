@@ -58,6 +58,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.data.LibrarySection
 import app.ao3reader.ui.common.BlockText
+import app.ao3reader.ui.common.OpenWorkList
 import app.ao3reader.ui.search.OpenWork
 import app.ao3reader.ui.search.Tags
 import app.ao3reader.ui.search.WorkCard
@@ -65,10 +66,6 @@ import app.ao3reader.ui.search.badgeText
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
-import okhttp3.HttpUrl
-
-/** Opens the in-app list of works for a series or author page (AO3 https URLs only). */
-typealias OpenWorkList = (url: HttpUrl, title: String) -> Unit
 
 /** Items from the end of the list at which the next page is requested (as in Search). */
 private const val PREFETCH_DISTANCE = 5
@@ -267,7 +264,7 @@ private fun SectionList(
                         badge = workId?.let { badgeText(p?.chapterNumber, it in state.readMarks) },
                         onClick = when {
                             workId != null -> { { onOpenWork(workId) } }
-                            url != null -> { { onOpenWorkList(url, row.title) } }
+                            url != null -> { { onOpenWorkList(url, row.listTitle) } }
                             else -> null
                         },
                     )
@@ -281,6 +278,8 @@ private fun SectionList(
                         summary = s.summaries[w.workId].orEmpty(),
                         badge = badgeText(progress?.chapterNumber, w.workId in state.readMarks),
                         onClick = { onOpenWork(w.workId) },
+                        links = s.links[w.workId],
+                        onOpenWorkList = onOpenWorkList,
                         extras = extras?.let { e -> { LibraryExtras(e) } },
                     )
                 }

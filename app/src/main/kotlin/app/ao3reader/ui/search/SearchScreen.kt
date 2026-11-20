@@ -76,6 +76,7 @@ import app.ao3reader.ao3.model.SearchQuery
 import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.data.db.PresetEntity
 import app.ao3reader.data.db.ProgressEntity
+import app.ao3reader.ui.common.OpenWorkList
 import app.ao3reader.ui.common.AppIcons
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -117,6 +118,7 @@ fun SearchScreen(
     /** Emits when the Search tab is tapped again: back to the top. */
     reselect: Flow<Unit>,
     onAccount: () -> Unit,
+    onOpenWorkList: OpenWorkList,
     onOpenWork: OpenWork,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -271,6 +273,8 @@ fun SearchScreen(
                     summary = state.summaries[w.workId].orEmpty(),
                     badge = badgeText(progress?.chapterNumber, w.workId in state.readMarks),
                     onClick = { onOpenWork(w.workId, progress?.chapterId, progress?.chapterNumber ?: 1) },
+                    links = state.links[w.workId],
+                    onOpenWorkList = onOpenWorkList,
                 )
             }
             if (state.works.isNotEmpty() && (state.loading || state.error != null)) {

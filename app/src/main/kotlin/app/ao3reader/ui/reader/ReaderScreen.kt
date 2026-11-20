@@ -79,6 +79,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.ao3reader.ao3.model.Block
 import app.ao3reader.ao3.model.ChapterContent
 import app.ao3reader.ao3.net.FetchResult
+import app.ao3reader.ui.common.CardLinks
+import app.ao3reader.ui.common.OpenWorkList
+import app.ao3reader.ui.common.headerLinks
+import app.ao3reader.ui.search.LinkLine
 import app.ao3reader.ui.common.BlockItem
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -103,7 +107,7 @@ private const val EDGE_RESISTANCE = 0.2f
  * no gesture-following preview: the bars come back first, then the pop plays on release.
  */
 @Composable
-fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
+fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit, onOpenWorkList: OpenWorkList) {
     val s by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -183,6 +187,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                             onScroll = vm::onScroll,
                             onNext = vm::next,
                             onRetry = vm::retry,
+                            onOpenWorkList = onOpenWorkList,
                         )
                     }
                 }
@@ -299,6 +304,7 @@ private fun ChapterPane(
     onScroll: (Int, Int) -> Unit,
     onNext: () -> Unit,
     onRetry: () -> Unit,
+    onOpenWorkList: OpenWorkList,
 ) {
     val content = page.content
     // Text that was ready when the pane appeared shows at once; text that arrives later fades in instead of popping.
@@ -308,7 +314,7 @@ private fun ChapterPane(
     }
     when {
         content != null -> Box(Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha.value }) {
-            ChapterText(content, isCurrent, isLast, restore, style, onRestored, onScroll, onNext)
+            ChapterText(content, isCurrent, isLast, restore, style, onRestored, onScroll, onNext, onOpenWorkList)
         }
         page.error != null -> ErrorMessage(page.error, onRetry)
         // Empty background until the load has taken SPINNER_DELAY_MS, so cached swipes never flash a spinner.
@@ -328,6 +334,7 @@ private fun ChapterText(
     onRestored: () -> Unit,
     onScroll: (Int, Int) -> Unit,
     onNext: () -> Unit,
+    onOpenWorkList: OpenWorkList,
 ) {
     val listState = rememberLazyListState()
     val report by rememberUpdatedState(if (isCurrent) onScroll else null)
@@ -349,6 +356,8 @@ private fun ChapterText(
     val text = MaterialTheme.colorScheme.onBackground
     val dim = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
     val noteStyle = remember(style) { style.forNotes() }
+    // Built once per chapter from the parsed links (a few objects; no parsing).
+    val links = remember(content) { content.headerLinks() }
     // Stable padding: the bars come and go with the controls, the text must not jump.
     val bars = WindowInsets.systemBarsIgnoringVisibility.asPaddingValues()
     val padding = PaddingValues(
@@ -358,7 +367,7 @@ private fun ChapterText(
 
     LazyColumn(state = listState, contentPadding = padding, modifier = Modifier.fillMaxSize()) {
         if (content.ref.number == 1 || content.summary.isNotEmpty()) {
-            workHeader(content, style, noteStyle, text, dim)
+            workHeader(content, links, style, noteStyle, text, dim, onOpenWorkList)
         }
         if (content.ref.title.isNotBlank()) {
             item(key = "chapter-title") {
@@ -379,10 +388,12 @@ private fun ChapterText(
 
 private fun LazyListScope.workHeader(
     content: ChapterContent,
+    links: CardLinks,
     style: TextStyle,
     noteStyle: TextStyle,
     text: Color,
     dim: Color,
+    onOpenWorkList: OpenWorkList,
 ) {
     item(key = "work-title") {
         Column(Modifier.padding(bottom = 12.dp)) {
@@ -390,9 +401,9 @@ private fun LazyListScope.workHeader(
                 content.workTitle, color = text, fontWeight = FontWeight.Bold,
                 style = style.copy(fontSize = style.fontSize * 1.35f),
             )
-            if (content.authors.isNotEmpty()) {
-                Text("by " + content.authors.joinToString(", "), style = noteStyle, color = dim)
-            }
+            // Authors and series open their work lists; the rest of the header is not a tap target.
+            if (links.authors.isNotEmpty()) LinkLine("by", links.authors, noteStyle, dim, onOpenWorkList)
+            for (s in links.series) LinkLine(null, listOf(s), noteStyle, dim, onOpenWorkList)
         }
     }
     blocks("summary", content.summary, noteStyle, dim)

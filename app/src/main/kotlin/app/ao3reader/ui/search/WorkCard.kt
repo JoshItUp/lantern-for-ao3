@@ -19,12 +19,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.ao3reader.ao3.model.Block
 import app.ao3reader.ao3.model.WorkBlurb
 import app.ao3reader.ui.common.BlockText
+import app.ao3reader.ui.common.CardLinks
+import app.ao3reader.ui.common.OpenWorkList
+import app.ao3reader.ui.common.WorkLink
 
 private val CardShape = RoundedCornerShape(16.dp)
 private val TagShape = RoundedCornerShape(6.dp)
@@ -53,6 +58,9 @@ fun WorkCard(
     modifier: Modifier = Modifier,
     /** Extra lines at the bottom of the card (Library: visits, bookmark notes). */
     extras: (@Composable ColumnScope.() -> Unit)? = null,
+    /** Author and series links (built in the VM); with [onOpenWorkList] they are tappable on their own. */
+    links: CardLinks? = null,
+    onOpenWorkList: OpenWorkList? = null,
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val meta = remember(work) {
@@ -87,8 +95,17 @@ fun WorkCard(
             Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
                     Text(work.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    if (work.authors.isNotEmpty()) {
-                        Text("by " + work.authors.joinToString(", "), style = MaterialTheme.typography.bodySmall, color = muted)
+                    val open = onOpenWorkList?.takeIf { links != null && links.tappable }
+                    if (links != null && open != null) {
+                        if (links.authors.isNotEmpty()) {
+                            LinkLine("by", links.authors, MaterialTheme.typography.bodySmall, muted, open)
+                        }
+                        for (s in links.series) LinkLine(null, listOf(s), MaterialTheme.typography.bodySmall, muted, open)
+                    } else {
+                        if (work.authors.isNotEmpty()) {
+                            Text("by " + work.authors.joinToString(", "), style = MaterialTheme.typography.bodySmall, color = muted)
+                        }
+                        links?.series?.forEach { Text(it.label, style = MaterialTheme.typography.bodySmall, color = muted) }
                     }
                 }
                 if (badge != null) Badge(badge, Modifier.padding(start = 8.dp))
@@ -117,6 +134,37 @@ fun WorkCard(
             }
             if (stats.isNotEmpty()) Text(stats, style = MaterialTheme.typography.labelSmall, color = muted)
             extras?.invoke(this)
+        }
+    }
+}
+
+private val LinkShape = RoundedCornerShape(4.dp)
+
+/**
+ * "[prefix] A, B": each link with a URL is its own tap target (the card's tap is untouched around it);
+ * links without one (anonymous, orphaned, the list on screen) are plain text. The text is small, but
+ * Compose widens a touch target smaller than the 48 dp minimum when hit testing (ViewConfiguration
+ * minimumTouchTargetSize), so the line keeps its height and stays easy to hit.
+ */
+@Composable
+fun LinkLine(prefix: String?, links: List<WorkLink>, style: TextStyle, color: Color, onOpen: OpenWorkList) {
+    val linkColor = MaterialTheme.colorScheme.onSurface
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (prefix != null) Text(prefix, style = style, color = color, modifier = Modifier.padding(vertical = 2.dp))
+        links.forEachIndexed { i, l ->
+            val text = if (i < links.lastIndex) l.label + "," else l.label
+            val url = l.url
+            if (url == null) {
+                Text(text, style = style, color = color, modifier = Modifier.padding(vertical = 2.dp))
+            } else {
+                Text(
+                    text, style = style, color = linkColor, fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(LinkShape)
+                        .clickable(role = Role.Button, onClickLabel = l.title) { onOpen(url, l.title) }
+                        .padding(vertical = 2.dp),
+                )
+            }
         }
     }
 }

@@ -15,6 +15,7 @@ import app.ao3reader.data.ChapterCache
 import app.ao3reader.data.LibraryRepository
 import app.ao3reader.data.SearchRepository
 import app.ao3reader.data.SettingsStore
+import app.ao3reader.data.WorkListRepository
 import app.ao3reader.data.WorkRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -92,4 +93,9 @@ class AppContainer(val context: Context) {
     val workRepo: WorkRepository by lazy { WorkRepository(fetcher, chapterCache, appScope) }
 
     val libraryRepo: LibraryRepository by lazy { LibraryRepository(session, db) }
+
+    /** Signed in while an account acts (restricted works show), else signed out. */
+    val workListRepo: WorkListRepository by lazy {
+        WorkListRepository({ session.actingAccount.value != null }, { session.authedGet(it) }, { fetcher.get(it) })
+    }
 }

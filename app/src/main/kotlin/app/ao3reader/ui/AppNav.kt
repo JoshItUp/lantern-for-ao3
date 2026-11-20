@@ -49,12 +49,13 @@ import app.ao3reader.ui.account.AccountViewModel
 import app.ao3reader.ui.common.AppIcons
 import app.ao3reader.ui.library.LibraryScreen
 import app.ao3reader.ui.library.LibraryViewModel
-import app.ao3reader.ui.library.WorkListPlaceholder
-import app.ao3reader.ui.library.ao3LinkOrNull
 import app.ao3reader.ui.reader.ReaderScreen
 import app.ao3reader.ui.reader.ReaderViewModel
 import app.ao3reader.ui.search.SearchScreen
 import app.ao3reader.ui.search.SearchViewModel
+import app.ao3reader.ui.worklist.WorkListScreen
+import app.ao3reader.ui.worklist.WorkListViewModel
+import app.ao3reader.ao3.parse.Ao3Urls
 import kotlinx.coroutines.flow.MutableSharedFlow
 import okhttp3.HttpUrl
 
@@ -82,9 +83,12 @@ object Routes {
     /** A series' or author's works, in the app. Both arguments are URL-encoded strings. */
     const val WORK_LIST = "worklist?$ARG_URL={$ARG_URL}&$ARG_TITLE={$ARG_TITLE}"
 
-    /** Null unless [url] is an https archiveofourown.org link: nothing else is ever loaded. */
+    /**
+     * Null unless [url] is an AO3 series or author works list ([Ao3Urls.workList], normalized). The
+     * receiving screen validates the decoded argument again: nothing else is ever loaded.
+     */
     fun workList(url: HttpUrl, title: String): String? {
-        val safe = ao3LinkOrNull(url) ?: return null
+        val safe = Ao3Urls.workList(url) ?: return null
         return "worklist?$ARG_URL=${Uri.encode(safe.toString())}&$ARG_TITLE=${Uri.encode(title)}"
     }
 }
@@ -120,6 +124,19 @@ fun AppNav(container: AppContainer) {
     val searchReselect = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
 
     fun openAccount() = nav.navigate(Routes.ACCOUNT) { launchSingleTop = true }
+
+    // Every author/series link (cards, reader header, subscriptions). No launchSingleTop: a list opened
+    // from a list is a new screen. A repeat tap on the list just opened (top of the stack) is ignored.
+    fun openWorkList(url: HttpUrl, title: String) {
+        val route = Routes.workList(url, title) ?: return
+        val top = nav.currentBackStackEntry
+        val target = Ao3Urls.workList(url)?.toString()
+        if (top?.destination?.route == Routes.WORK_LIST && top.arguments?.getString(Routes.ARG_URL) == target) return
+        nav.navigate(route)
+    }
+
+    fun openWork(workId: Long, chapterId: Long?, number: Int) =
+        nav.navigate(Routes.reader(workId, chapterId, number)) { launchSingleTop = true }
 
     // The bar overlays the NavHost, so hiding it never relayouts a screen (tabs pad by BottomBarHeight).
     Box(Modifier.fillMaxSize()) {
@@ -167,9 +184,9 @@ fun AppNav(container: AppContainer) {
                     bottomBarHeight = BottomBarHeight,
                     reselect = searchReselect,
                     onAccount = ::openAccount,
-                ) { workId, chapterId, number ->
-                    nav.navigate(Routes.reader(workId, chapterId, number)) { launchSingleTop = true }
-                }
+                    onOpenWorkList = ::openWorkList,
+                    onOpenWork = ::openWork,
+                )
             }
             composable(Routes.LIBRARY) {
                 val vm: LibraryViewModel = viewModel(factory = LibraryViewModel.factory(container))
@@ -177,12 +194,8 @@ fun AppNav(container: AppContainer) {
                     vm,
                     bottomBarHeight = BottomBarHeight,
                     onAccount = ::openAccount,
-                    onOpenWork = { workId, chapterId, number ->
-                        nav.navigate(Routes.reader(workId, chapterId, number)) { launchSingleTop = true }
-                    },
-                    onOpenWorkList = { url, title ->
-                        Routes.workList(url, title)?.let { nav.navigate(it) { launchSingleTop = true } }
-                    },
+                    onOpenWork = ::openWork,
+                    onOpenWorkList = ::openWorkList,
                 )
             }
             composable(
@@ -192,9 +205,16 @@ fun AppNav(container: AppContainer) {
                     navArgument(Routes.ARG_TITLE) { type = NavType.StringType; defaultValue = "" },
                 ),
             ) { e ->
-                // Placeholder until the work-list screen lands (plan 2, task 8b).
+                // The decoded url is validated again by the ViewModel (Ao3Urls.workListOrNull).
+                val rawUrl = e.arguments?.getString(Routes.ARG_URL)
                 val title = e.arguments?.getString(Routes.ARG_TITLE).orEmpty()
-                WorkListPlaceholder(title, onBack = { if (nav.currentBackStackEntry?.id == e.id) nav.popBackStack() })
+                val vm: WorkListViewModel = viewModel(factory = WorkListViewModel.factory(container, rawUrl, title))
+                WorkListScreen(
+                    vm,
+                    onBack = { if (nav.currentBackStackEntry?.id == e.id) nav.popBackStack() },
+                    onOpenWork = ::openWork,
+                    onOpenWorkList = ::openWorkList,
+                )
             }
             composable(Routes.ACCOUNT) { e ->
                 val vm: AccountViewModel = viewModel(factory = AccountViewModel.factory(container))
@@ -215,7 +235,11 @@ fun AppNav(container: AppContainer) {
                 val vm: ReaderViewModel = viewModel(factory = ReaderViewModel.factory(container, workId, chapterId, number))
                 // Only pop while this entry is on top: a second back during the exit animation must
                 // not pop the search screen as well.
-                ReaderScreen(vm, onBack = { if (nav.currentBackStackEntry?.id == e.id) nav.popBackStack() })
+                ReaderScreen(
+                    vm,
+                    onBack = { if (nav.currentBackStackEntry?.id == e.id) nav.popBackStack() },
+                    onOpenWorkList = ::openWorkList,
+                )
             }
         }
 

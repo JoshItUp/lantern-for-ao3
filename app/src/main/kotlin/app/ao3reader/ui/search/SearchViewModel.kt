@@ -22,6 +22,8 @@ import app.ao3reader.data.db.ProgressEntity
 import app.ao3reader.data.db.ReadMarkDao
 import app.ao3reader.data.searchQueryFromJson
 import app.ao3reader.data.toJson
+import app.ao3reader.ui.common.CardLinks
+import app.ao3reader.ui.common.cardLinks
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +60,8 @@ data class SearchUiState(
     val readMarks: Set<Long> = emptySet(),
     /** Summary of each shown work, converted once off the main thread. */
     val summaries: Map<Long, List<Block>> = emptyMap(),
+    /** Author and series links of each shown work, built with the summaries. */
+    val links: Map<Long, CardLinks> = emptyMap(),
     /** True once any search has been started; distinguishes "no results" from "not searched yet". */
     val searched: Boolean = false,
     /** Bumped by every [SearchViewModel.runSearch], so the screen can react to each new search. */
@@ -118,7 +122,7 @@ class SearchViewModel(
         val q = _state.value.query
         shownQuery = q
         failedPage = null
-        _state.update { it.copy(works = emptyList(), summaries = emptyMap(), page = 0, hasNext = false,
+        _state.update { it.copy(works = emptyList(), summaries = emptyMap(), links = emptyMap(), page = 0, hasNext = false,
             loading = true, error = null, searched = true, searchId = it.searchId + 1) }
         loadJob = viewModelScope.launch { load(gen, q, 1) }
     }
@@ -170,12 +174,13 @@ class SearchViewModel(
                 val have = _state.value.works.mapTo(HashSet()) { it.workId }
                 // AO3 listings can shift between requests; never show a work twice (LazyColumn keys).
                 val fresh = result.value.works.filter { have.add(it.workId) }
-                val summaries = withContext(parseDispatcher) {
-                    fresh.associate { it.workId to convertSummary(it.summaryHtml) }
+                val (summaries, links) = withContext(parseDispatcher) {
+                    fresh.associate { it.workId to convertSummary(it.summaryHtml) } to
+                        fresh.associate { it.workId to it.cardLinks() }
                 }
                 if (gen != generation) return
                 _state.update {
-                    it.copy(works = it.works + fresh, summaries = it.summaries + summaries,
+                    it.copy(works = it.works + fresh, summaries = it.summaries + summaries, links = it.links + links,
                         page = page, hasNext = result.value.hasNext, loading = false, error = null)
                 }
             }

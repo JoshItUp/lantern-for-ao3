@@ -11,6 +11,7 @@ import app.ao3reader.account.Session
 import app.ao3reader.ao3.model.Block
 import app.ao3reader.ao3.model.WorkBlurb
 import app.ao3reader.ao3.net.FetchResult
+import app.ao3reader.ao3.parse.Ao3Urls
 import app.ao3reader.ao3.parse.BookmarkExtra
 import app.ao3reader.ao3.parse.LibraryPage
 import app.ao3reader.ao3.parse.ReadingExtra
@@ -23,6 +24,8 @@ import app.ao3reader.data.NotSignedInException
 import app.ao3reader.data.db.ProgressDao
 import app.ao3reader.data.db.ProgressEntity
 import app.ao3reader.data.db.ReadMarkDao
+import app.ao3reader.ui.common.CardLinks
+import app.ao3reader.ui.common.cardLinks
 import app.ao3reader.ui.search.SearchViewModel
 import app.ao3reader.ui.search.errorMessage
 import kotlinx.coroutines.CancellationException
@@ -84,12 +87,18 @@ data class CardExtras(
  * opens the in-app work list. Neither: not tappable.
  */
 @Immutable
-data class SubRow(val key: String, val title: String, val detail: String?, val workId: Long?, val url: HttpUrl?)
+data class SubRow(
+    val key: String, val title: String, val detail: String?, val workId: Long?, val url: HttpUrl?,
+    /** The work list's screen title ("Works by …" for an author). */
+    val listTitle: String = title,
+)
 
 @Immutable
 data class SectionState(
     val works: List<WorkBlurb> = emptyList(),
     val summaries: Map<Long, List<Block>> = emptyMap(),
+    /** Author and series links per work, built with the summaries. */
+    val links: Map<Long, CardLinks> = emptyMap(),
     val extras: Map<Long, CardExtras> = emptyMap(),
     val subs: List<SubRow> = emptyList(),
     /** Last page shown (0: nothing yet). */
@@ -132,12 +141,6 @@ fun isNotSignedIn(e: FetchResult): Boolean = e is FetchResult.Failed && e.cause 
  * a NotSignedIn result there is a failed silent re-login: a plain, retryable error.
  */
 fun libraryErrorMessage(e: FetchResult): String = errorMessage(e)
-
-/** Only https AO3 series and author pages (default port) open a work list. */
-internal fun ao3LinkOrNull(url: HttpUrl): HttpUrl? = url.takeIf {
-    it.scheme == "https" && it.host == "archiveofourown.org" && it.port == 443 &&
-        (it.encodedPath.startsWith("/series/") || it.encodedPath.startsWith("/users/"))
-}
 
 internal fun visitedLine(r: ReadingExtra?): String? {
     if (r == null) return null
@@ -250,7 +253,7 @@ class LibraryViewModel(
                 }
                 if (cached != null && gen == generations[section.ordinal] && section(section).isEmpty) {
                     updateSection(section) {
-                        it.copy(works = cached.works, summaries = cached.summaries, extras = cached.extras,
+                        it.copy(works = cached.works, summaries = cached.summaries, links = cached.links, extras = cached.extras,
                             page = 1, hasNext = cached.hasNext, replaceId = it.replaceId + 1)
                     }
                 }
@@ -299,7 +302,7 @@ class LibraryViewModel(
                 updateSection(section) { s ->
                     val base = if (replace) SectionState(replaceId = s.replaceId + 1) else s
                     base.copy(
-                        works = base.works + p.works, summaries = base.summaries + p.summaries,
+                        works = base.works + p.works, summaries = base.summaries + p.summaries, links = base.links + p.links,
                         extras = base.extras + p.extras, subs = base.subs + p.subs,
                         page = page, hasNext = p.hasNext, loaded = true,
                         loading = false, refreshing = false, pulled = false, error = null, failedPage = null,
@@ -333,6 +336,7 @@ class LibraryViewModel(
     private class Prepared(
         val works: List<WorkBlurb> = emptyList(),
         val summaries: Map<Long, List<Block>> = emptyMap(),
+        val links: Map<Long, CardLinks> = emptyMap(),
         val extras: Map<Long, CardExtras> = emptyMap(),
         val subs: List<SubRow> = emptyList(),
         val hasNext: Boolean,
@@ -344,16 +348,18 @@ class LibraryViewModel(
         // AO3 listings can shift between requests; never show a work twice (LazyColumn keys).
         val works = page.works.filter { seen.add(it.workId) }
         val summaries = HashMap<Long, List<Block>>(works.size)
+        val links = HashMap<Long, CardLinks>(works.size)
         val extras = HashMap<Long, CardExtras>()
         for (w in works) {
             summaries[w.workId] = SearchViewModel.convertSummary(w.summaryHtml)
+            links[w.workId] = w.cardLinks()
             val e = when (section) {
                 LibrarySection.BOOKMARKS -> bookmarkExtras(page.bookmarks[w.workId])
                 else -> readingExtras(page.readings[w.workId])
             }
             if (e != null && !e.isEmpty) extras[w.workId] = e
         }
-        return Prepared(works, summaries, extras, hasNext = page.hasNext)
+        return Prepared(works, summaries, links, extras, hasNext = page.hasNext)
     }
 
     private fun readingExtras(r: ReadingExtra?): CardExtras? =
@@ -372,8 +378,8 @@ class LibraryViewModel(
         val rows = page.items.mapNotNull { item ->
             val row = when (item) {
                 is Subscription.Work -> SubRow("work:${item.workId}", item.title, item.author, item.workId, null)
-                is Subscription.Series -> item.url.toString().let { SubRow(it, item.title, "Series", null, ao3LinkOrNull(item.url)) }
-                is Subscription.User -> item.url.toString().let { SubRow(it, item.title, "Author", null, ao3LinkOrNull(item.url)) }
+                is Subscription.Series -> item.url.toString().let { SubRow(it, item.title, "Series", null, Ao3Urls.workList(item.url)) }
+                is Subscription.User -> item.url.toString().let { SubRow(it, item.title, "Author", null, Ao3Urls.workList(item.url), "Works by ${item.title}") }
             }
             row.takeIf { seen.add(it.key) }
         }
