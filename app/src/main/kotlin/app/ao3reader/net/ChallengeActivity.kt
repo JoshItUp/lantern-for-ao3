@@ -120,7 +120,8 @@ class ChallengeActivity : Activity() {
         const val EXTRA_URL = "url"
         const val EXTRA_UA = "ua"
         const val EXTRA_TOKEN = "token"
-        private var current: WeakReference<ChallengeActivity>? = null
+        /** Written on the main thread, read from the solver's coroutine (via [requestFinish]). */
+        @Volatile private var current: WeakReference<ChallengeActivity>? = null
 
         /** Closes a lingering window (e.g. after timeout). */
         internal fun requestFinish(token: Long) {

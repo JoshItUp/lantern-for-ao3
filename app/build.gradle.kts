@@ -51,6 +51,14 @@ android {
     }
 }
 
+ksp {
+    // Room writes each schema version here; the JSON is committed so future migrations can be checked against it.
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+// Every variant's KSP run reads and rewrites the same schema file: run them one at a time, or one
+// can read the file while another is writing it (an empty-JSON failure on a clean parallel build).
+tasks.matching { it.name == "kspReleaseKotlin" }.configureEach { mustRunAfter("kspDebugKotlin") }
+
 kotlin {
     compilerOptions {
         jvmTarget = JvmTarget.JVM_21

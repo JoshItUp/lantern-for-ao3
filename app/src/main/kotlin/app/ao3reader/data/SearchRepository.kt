@@ -31,7 +31,7 @@ class SearchRepository(
     companion object {
         /** What AO3's own JS sends; the autocomplete controller only responds to JSON. */
         const val AUTOCOMPLETE_ACCEPT = "application/json, text/javascript, */*; q=0.01"
-        /** AO3 returns at most this many suggestions; a shorter list is everything that matches. */
+        /** Treat fewer than this many suggestions as the complete match list; conservative (AO3 returns up to ~15–16). */
         const val AUTOCOMPLETE_PAGE_LIMIT = 10
         const val AUTOCOMPLETE_CACHE_SIZE = 100
     }

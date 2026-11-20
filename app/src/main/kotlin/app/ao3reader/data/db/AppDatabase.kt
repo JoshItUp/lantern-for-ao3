@@ -6,7 +6,7 @@ import androidx.room.RoomDatabase
 @Database(
     entities = [PresetEntity::class, ProgressEntity::class, ReadMarkEntity::class],
     version = 1,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun presetDao(): PresetDao
