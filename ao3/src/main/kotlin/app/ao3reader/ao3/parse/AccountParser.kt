@@ -10,6 +10,7 @@ object AccountParser {
     private val userHref = Regex("^(?:https?://[^/]+)?/users/([^/?#]+)/?(?:[?#].*)?$")
     private val notNames = setOf("login", "logout")
 
+    /** Signed in = a `/users/<name>` link directly inside `#greeting`; deeper paths (e.g. /users/x/pseuds/y) are skipped. */
     fun state(html: String): AccountState {
         val doc = Jsoup.parse(html)
         val greeting = doc.selectFirst("#greeting")
@@ -17,7 +18,12 @@ object AccountParser {
             for (a in greeting.select("a[href]")) {
                 val name = userHref.find(a.attr("href"))?.groupValues?.get(1) ?: continue
                 if (name in notNames) continue
-                return AccountState(true, java.net.URLDecoder.decode(name.replace("+", "%2B"), "UTF-8"))
+                val decoded = try {
+                    java.net.URLDecoder.decode(name.replace("+", "%2B"), "UTF-8")
+                } catch (e: IllegalArgumentException) {
+                    name
+                }
+                return AccountState(true, decoded)
             }
         }
         return AccountState(false, null)

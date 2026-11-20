@@ -5,6 +5,10 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 
+/**
+ * A parsed HTML form. The fetcher only ever POSTs: submit [fields] as-is (including any Rails
+ * `_method` override, which is kept exactly as parsed). [method] is informational: the effective verb.
+ */
 data class Ao3Form(val action: HttpUrl, val method: String, val fields: List<Pair<String, String>>)
 
 object FormParser {
@@ -18,11 +22,13 @@ object FormParser {
             when (el.tagName()) {
                 "textarea" -> fields.add(name to el.wholeText().removePrefix("\n"))
                 "select" -> {
-                    val opts = el.select("option")
-                    val chosen = opts.firstOrNull { o: Element -> o.hasAttr("selected") } ?: opts.firstOrNull()
-                    if (chosen != null) {
-                        fields.add(name to (if (chosen.hasAttr("value")) chosen.attr("value") else chosen.text()))
+                    val opts = el.select("option").filter { o: Element -> !o.hasAttr("disabled") }
+                    val chosen: List<Element> = if (el.hasAttr("multiple")) {
+                        opts.filter { o: Element -> o.hasAttr("selected") }
+                    } else {
+                        listOfNotNull(opts.firstOrNull { o: Element -> o.hasAttr("selected") } ?: opts.firstOrNull())
                     }
+                    for (c in chosen) fields.add(name to (if (c.hasAttr("value")) c.attr("value") else c.text()))
                 }
                 else -> {
                     val type = el.attr("type").lowercase()
@@ -33,7 +39,7 @@ object FormParser {
                 }
             }
         }
-        val override = fields.firstOrNull { it.first == "_method" }?.second?.lowercase()
+        val override = fields.lastOrNull { it.first == "_method" }?.second?.lowercase()
         val declared = form.attr("method").lowercase().ifEmpty { "get" }
         val method = if (declared == "post" && !override.isNullOrEmpty()) override else declared
         val actionAttr = form.attr("action")
