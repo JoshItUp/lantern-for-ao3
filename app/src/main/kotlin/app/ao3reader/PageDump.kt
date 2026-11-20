@@ -31,8 +31,8 @@ class DumpingFetcher(private val delegate: Fetcher, private val dump: PageDump) 
         return result
     }
 
-    override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?): FetchResult =
-        delegate.post(url, fields, accept)
+    override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?, interactive: Boolean): FetchResult =
+        delegate.post(url, fields, accept, interactive)
 
     private fun isLogin(url: HttpUrl): Boolean = url.encodedPath.startsWith("/users/login")
 }

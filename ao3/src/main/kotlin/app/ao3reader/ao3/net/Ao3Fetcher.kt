@@ -53,10 +53,10 @@ class Ao3Fetcher(
             }.build()
         }
 
-    override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?): FetchResult =
+    override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?, interactive: Boolean): FetchResult =
         // A solved challenge is not followed by a resubmit: the form's authenticity token may be stale,
         // and resending a non-idempotent request is never safe. The caller re-GETs the form instead.
-        fetch(url, interactive = true, resendAfterSolve = false) {
+        fetch(url, interactive = interactive, resendAfterSolve = false) {
             val body = FormBody.Builder().apply { fields.forEach { (k, v) -> add(k, v) } }.build()
             Request.Builder().url(url).headers(accept).post(body).build()
         }

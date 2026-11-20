@@ -22,6 +22,6 @@ class ObservingFetcher(private val delegate: Fetcher, private val onOk: (String)
         return result
     }
 
-    override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?): FetchResult =
-        delegate.post(url, fields, accept)
+    override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?, interactive: Boolean): FetchResult =
+        delegate.post(url, fields, accept, interactive)
 }

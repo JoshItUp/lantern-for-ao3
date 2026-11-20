@@ -21,7 +21,7 @@ class DebugPageDumpTest {
         override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean): FetchResult {
             lastAccept = accept; lastInteractive = interactive; return result
         }
-        override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?) = result
+        override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?, interactive: Boolean) = result
     }
 
     @Test fun passesAcceptThrough() = runBlocking {

@@ -73,7 +73,9 @@ private fun keystoreKey(): SecretKey = synchronized(keyLock) {
  * Never logs or reports either value.
  */
 class CredentialStore(private val prefs: SharedPreferences, private val box: SecretBox) {
+    /** Replaces any stored account. Throws if sealing fails (Keystore errors); nothing old is left behind then. */
     fun save(username: String, password: String) {
+        prefs.edit().remove(USERNAME).remove(PASSWORD).remove(DISPLAY_NAME).commit()
         val sealed = Base64.getEncoder().encodeToString(box.seal(password.toByteArray(Charsets.UTF_8)))
         prefs.edit().putString(USERNAME, username).putString(PASSWORD, sealed).commit()
     }
@@ -104,12 +106,24 @@ class CredentialStore(private val prefs: SharedPreferences, private val box: Sec
         return prefs.getString(USERNAME, null)
     }
 
+    /** The AO3 name shown in the greeting (the login identifier may be an email). */
+    fun saveDisplayName(name: String) {
+        prefs.edit().putString(DISPLAY_NAME, name).commit()
+    }
+
+    /** The saved AO3 name; null unless a password is stored too. */
+    fun displayName(): String? {
+        if (!prefs.contains(PASSWORD)) return null
+        return prefs.getString(DISPLAY_NAME, null)
+    }
+
     fun clear() {
-        prefs.edit().remove(USERNAME).remove(PASSWORD).commit()
+        prefs.edit().remove(USERNAME).remove(PASSWORD).remove(DISPLAY_NAME).commit()
     }
 
     private companion object {
         const val USERNAME = "username"
         const val PASSWORD = "password"
+        const val DISPLAY_NAME = "display_name"
     }
 }

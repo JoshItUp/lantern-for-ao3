@@ -14,6 +14,9 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,6 +25,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import org.jsoup.Jsoup
+import java.util.concurrent.atomic.AtomicLong
 
 sealed interface SignInResult {
     data object Ok : SignInResult
@@ -34,14 +38,24 @@ sealed interface SignInResult {
 class SignInFlowException(message: String) : Exception(message)
 
 /**
+ * The cause of the [FetchResult.Failed] that [Session.authedPost] returns when the POST came back signed
+ * out and the session was renewed. The POST was NOT resent: its authenticity token belonged to the old
+ * session. The caller re-GETs the page the form came from (now signed in) and submits the fresh form.
+ */
+class SessionRenewedException : Exception("session renewed; fetch the form again")
+
+/**
  * The owner's AO3 session. [fetcher] must be the chain WITHOUT the [ObservingFetcher]: Session reads
  * account state from its own responses.
  *
  * Silent re-login: when stored credentials exist and a signed-in page was expected ([authedGet],
  * [authedPost]) but AO3 shows the signed-out header, Session logs in again with the stored
- * credentials (once per call; concurrent callers share one attempt) and retries the request once.
- * If AO3 rejects the stored credentials, they are kept but [needsSignIn] turns true and no further
- * silent attempt is made until the owner signs in again.
+ * credentials, at most once per call; concurrent callers share one attempt.
+ * - Rejected credentials are kept, [needsSignIn] turns true and nothing is tried silently until the
+ *   owner signs in again (or a signed-in page is seen).
+ * - Any other failure (Blocked, RateLimited, network, odd page) pauses silent attempts for
+ *   [PAUSE_MS] or until a signed-in page is seen.
+ * - [signIn] and [signOut] supersede an in-flight re-login (cancelled; a late result is discarded).
  */
 class Session(
     private val fetcher: Fetcher,
@@ -50,28 +64,52 @@ class Session(
     private val cookies: () -> Unit,
     private val scope: CoroutineScope,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    private val _state = MutableStateFlow(store.username().let { AccountState(it != null, it) })
+    /** An account was signed in (stored, or signed in this run even if saving failed); gates signed-in observations. */
+    @Volatile private var accountKnown = store.username() != null
+
+    private val _state = MutableStateFlow(
+        (store.displayName() ?: store.username()).let { AccountState(it != null, it) }
+    )
     val state: StateFlow<AccountState> = _state.asStateFlow()
 
     private val _needsSignIn = MutableStateFlow(false)
     /** True after the stored credentials were rejected by a silent re-login: the UI should prompt. */
     val needsSignIn: StateFlow<Boolean> = _needsSignIn.asStateFlow()
 
+    private val _credentialsSaved = MutableStateFlow(accountKnown)
+    /**
+     * Whether credentials are stored for silent re-login. False after a [signIn] whose save failed
+     * (Keystore error): the session is live, but it won't be renewed silently when it expires.
+     */
+    val credentialsSaved: StateFlow<Boolean> = _credentialsSaved.asStateFlow()
+
     private val reloginLock = Mutex()
     /** Guarded by [reloginLock]. */
     private var inFlight: Deferred<Boolean>? = null
     /** Bumped on every successful login, so a request that started before it retries instead of logging in again. */
-    @Volatile private var generation = 0L
+    private val generation = AtomicLong()
+    /** Bumped by [signIn] and [signOut]: a login started under an older epoch is discarded. */
+    private val epoch = AtomicLong()
+    /** Silent re-login is paused until this clock time after a failure that wasn't a rejection. */
+    @Volatile private var pausedUntil = 0L
 
     suspend fun signIn(username: String, password: String): SignInResult {
-        val result = login(username, password)
+        val ep = supersede()
+        val result = login(username, password, verify = true, expectedName = username, interactive = true, ep = ep)
         when (result) {
             SignInResult.Ok -> {
-                withContext(io) { store.save(username, password) }
+                val name = _state.value.username ?: username
+                val saved = reloginLock.withLock {
+                    if (epoch.get() != ep) return@withLock false
+                    withContext(io) { saveCredentials(username, password, name) }
+                }
+                accountKnown = true
+                _credentialsSaved.value = saved
                 _needsSignIn.value = false
             }
-            is SignInResult.Rejected -> _state.value = SIGNED_OUT
+            is SignInResult.Rejected -> if (epoch.get() == ep) _state.value = SIGNED_OUT
             is SignInResult.Error -> Unit
         }
         return result
@@ -79,6 +117,15 @@ class Session(
 
     /** Logs out on AO3 when it can (best effort), then always clears the cookies and stored credentials. */
     suspend fun signOut() {
+        withContext(NonCancellable) {
+            reloginLock.withLock {
+                inFlight?.cancelAndJoin()
+                inFlight = null
+                epoch.incrementAndGet()
+                accountKnown = false
+                withContext(io) { store.clear() }
+            }
+        }
         try {
             val page = fetcher.get(Ao3Urls.logout())
             if (page is FetchResult.Ok && AccountParser.state(page.html).signedIn) {
@@ -93,135 +140,175 @@ class Session(
                 }
             }
         } finally {
+            // After the join above: no re-login can set new session cookies once these are cleared.
             withContext(NonCancellable + io) {
                 cookies()
                 store.clear()
             }
             _state.value = SIGNED_OUT
             _needsSignIn.value = false
+            _credentialsSaved.value = false
+            pausedUntil = 0L
         }
     }
 
     /**
      * Signed-in GET. On a page showing the signed-out header (while credentials are stored) it re-logs in
-     * once and retries once. If the re-login fails, the original response is returned and [state] is signed out.
+     * once and retries once. If the re-login fails, the original response is returned and [state] is signed
+     * out. [interactive] false (background work) also keeps the re-login from showing the challenge solver.
      */
-    suspend fun authedGet(url: HttpUrl, accept: String? = null): FetchResult =
-        authed { fetcher.get(url, accept) }
+    suspend fun authedGet(url: HttpUrl, accept: String? = null, interactive: Boolean = true): FetchResult =
+        authed(interactive, isPost = false) { fetcher.get(url, accept, interactive) }
 
     /**
      * Posts [form] with [overrides] applied: every field named in [overrides] is replaced (at the position
-     * of its first occurrence), new names are appended. Same re-login rule as [authedGet]; the retry
-     * resends the same fields, so a stale token is the caller's to refresh.
+     * of its first occurrence), new names are appended.
+     *
+     * A POST is never resent. If the state is already signed out, the re-login happens before sending.
+     * If the response shows signed out, the session is renewed and the result is
+     * `Failed(SessionRenewedException)` when that worked: re-GET the form's page and submit again. If the
+     * renewal failed, the signed-out response itself is returned.
      */
     suspend fun authedPost(form: Ao3Form, overrides: List<Pair<String, String>>): FetchResult {
         val fields = applyOverrides(form.fields, overrides)
-        return authed { fetcher.post(form.action, fields) }
+        return authed(interactive = true, isPost = true) { fetcher.post(form.action, fields) }
     }
 
-    /** Updates [state] from any AO3 page the app fetched with the session. Non-AO3 bodies (JSON) are ignored. */
+    /** Updates [state] from any AO3 page the app fetched with the session. Pages without evidence are ignored. */
     fun observe(html: String) {
-        if (!isAo3Page(html)) return
-        val s = AccountParser.state(header(html))
-        if (s.signedIn) {
-            _state.value = s
-            _needsSignIn.value = false
-        } else if (_state.value.signedIn) {
-            _state.value = SIGNED_OUT
-        }
+        val s = AccountParser.observed(header(html)) ?: return
+        if (s.signedIn) acceptSignedIn(s) else if (_state.value.signedIn) _state.value = SIGNED_OUT
     }
 
-    private suspend fun authed(request: suspend () -> FetchResult): FetchResult {
-        var gen = generation
+    private fun acceptSignedIn(s: AccountState) {
+        // Without an account (signed out, or never signed in) a page loaded in the meantime can't revive it.
+        if (!accountKnown) return
+        _state.value = s
+        _needsSignIn.value = false
+        pausedUntil = 0L
+    }
+
+    private suspend fun authed(interactive: Boolean, isPost: Boolean, request: suspend () -> FetchResult): FetchResult {
+        var gen = generation.get()
         var relogged = false
         // The state already says signed out (observed elsewhere): log in before the request, not after.
         if (!_state.value.signedIn && canRelogin()) {
             relogged = true
-            relogin(gen)
-            gen = generation
+            relogin(gen, interactive)
+            gen = generation.get()
         }
         val first = request()
         if (!showsSignedOut(first)) return first
         _state.value = SIGNED_OUT
-        if (relogged || !canRelogin() || !relogin(gen)) return first
+        if (relogged || !canRelogin() || !relogin(gen, interactive)) return first
+        if (isPost) return FetchResult.Failed(SessionRenewedException())
         val second = request()
         // Read the state from the retry, but never log in again in this call.
         if (showsSignedOut(second)) _state.value = SIGNED_OUT
         return second
     }
 
-    /** True for an Ok AO3 page with the signed-out header; a signed-in page updates [state] on the way. */
+    /** True for an Ok page with signed-out evidence; a signed-in page updates [state] on the way. */
     private fun showsSignedOut(result: FetchResult): Boolean {
-        if (result !is FetchResult.Ok || !isAo3Page(result.html)) return false
-        val s = AccountParser.state(header(result.html))
-        if (s.signedIn) {
-            _state.value = s
-            _needsSignIn.value = false
-        }
+        if (result !is FetchResult.Ok) return false
+        val s = AccountParser.observed(header(result.html)) ?: return false
+        if (s.signedIn) acceptSignedIn(s)
         return !s.signedIn
     }
 
-    private fun canRelogin(): Boolean = !_needsSignIn.value && store.username() != null
+    private fun canRelogin(): Boolean =
+        !_needsSignIn.value && clock() >= pausedUntil && store.username() != null
 
     /** Shares one in-flight re-login. True when signed in again (by this attempt or one since [gen]). */
-    private suspend fun relogin(gen: Long): Boolean {
+    private suspend fun relogin(gen: Long, interactive: Boolean): Boolean {
         val attempt = reloginLock.withLock {
-            if (generation != gen) return true
-            if (_needsSignIn.value) return false
-            inFlight?.takeIf { it.isActive } ?: scope.async { doRelogin() }.also { inFlight = it }
+            if (generation.get() != gen) return true
+            if (!canRelogin()) return false
+            inFlight?.takeIf { it.isActive } ?: run {
+                val ep = epoch.get()
+                scope.async { doRelogin(ep, interactive) }
+            }.also { inFlight = it }
         }
-        return attempt.await()
+        return try {
+            attempt.await()
+        } catch (e: CancellationException) {
+            // The attempt was superseded by signIn/signOut; only rethrow if this caller itself was cancelled.
+            currentCoroutineContext().ensureActive()
+            false
+        }
     }
 
-    private suspend fun doRelogin(): Boolean = try {
+    private suspend fun doRelogin(ep: Long, interactive: Boolean): Boolean = try {
         val creds = withContext(io) { store.load() }
         if (creds == null) {
-            _state.value = SIGNED_OUT
             false
         } else {
-            when (login(creds.first, creds.second)) {
-                SignInResult.Ok -> true
+            val expected = withContext(io) { store.displayName() } ?: creds.first
+            when (login(creds.first, creds.second, verify = false, expectedName = expected, interactive = interactive, ep = ep)) {
+                SignInResult.Ok -> {
+                    val name = _state.value.username
+                    if (name != null && name != expected) {
+                        withContext(io) { runCatching { if (epoch.get() == ep) store.saveDisplayName(name) } }
+                    }
+                    true
+                }
                 is SignInResult.Rejected -> {
-                    _state.value = SIGNED_OUT
-                    _needsSignIn.value = true
+                    if (epoch.get() == ep) {
+                        _state.value = SIGNED_OUT
+                        _needsSignIn.value = true
+                    }
                     false
                 }
-                is SignInResult.Error -> false
+                is SignInResult.Error -> {
+                    if (epoch.get() == ep) pausedUntil = clock() + PAUSE_MS
+                    false
+                }
             }
         }
     } catch (e: CancellationException) {
         throw e
     } catch (_: Exception) {
+        if (epoch.get() == ep) pausedUntil = clock() + PAUSE_MS
         false
     }
 
     /**
      * GET the login page → fill the form → POST. A Cloudflare-blocked POST re-GETs the form once for a fresh
-     * token; a page already signed in as someone else is cleared and fetched once more.
+     * token. A login page that is already signed in counts as success only for a silent re-login
+     * (![verify]) as [expectedName]; otherwise the session cookies are cleared and the page fetched once
+     * more, so the password really is checked.
      */
-    private suspend fun login(username: String, password: String): SignInResult {
-        var retried = false
+    private suspend fun login(
+        username: String,
+        password: String,
+        verify: Boolean,
+        expectedName: String,
+        interactive: Boolean,
+        ep: Long,
+    ): SignInResult {
+        var cleared = false
+        var reposted = false
         while (true) {
-            val page = fetcher.get(Ao3Urls.login())
+            val page = fetcher.get(Ao3Urls.login(), interactive = interactive)
             if (page !is FetchResult.Ok) return SignInResult.Error(page)
             val already = AccountParser.state(page.html)
             if (already.signedIn) {
-                if (already.username.equals(username, ignoreCase = true)) return loggedIn(already)
-                if (retried) return SignInResult.Error(FetchResult.Failed(SignInFlowException("signed in as another account")))
-                retried = true
+                if (!verify && already.username.equals(expectedName, ignoreCase = true)) return loggedIn(already, ep)
+                if (cleared) return SignInResult.Error(FetchResult.Failed(SignInFlowException("still signed in after clearing cookies")))
+                cleared = true
                 withContext(io) { cookies() }
                 continue
             }
             val form = AccountParser.loginForm(page.html, page.finalUrl)
                 ?: return SignInResult.Error(FetchResult.Failed(SignInFlowException("login form not found")))
-            val posted = fetcher.post(form.action, fillLogin(form.fields, username, password))
-            if (posted is FetchResult.Blocked && !retried) {
-                retried = true
+            val posted = fetcher.post(form.action, fillLogin(form.fields, username, password), interactive = interactive)
+            if (posted is FetchResult.Blocked && !reposted) {
+                reposted = true
                 continue
             }
             if (posted !is FetchResult.Ok) return SignInResult.Error(posted)
             val s = AccountParser.state(posted.html)
-            if (s.signedIn) return loggedIn(s)
+            if (s.signedIn) return loggedIn(s, ep)
             val flash = AccountParser.flashError(posted.html)
             if (flash != null) return SignInResult.Rejected(flash)
             if (AccountParser.loginForm(posted.html, posted.finalUrl) != null) {
@@ -231,29 +318,50 @@ class Session(
         }
     }
 
-    private fun loggedIn(s: AccountState): SignInResult {
+    private fun loggedIn(s: AccountState, ep: Long): SignInResult {
+        if (epoch.get() != ep) return SignInResult.Error(FetchResult.Failed(SignInFlowException("superseded")))
         _state.value = s
-        generation++
+        pausedUntil = 0L
+        generation.incrementAndGet()
         return SignInResult.Ok
     }
 
-    private companion object {
-        val SIGNED_OUT = AccountState(false, null)
-        const val LOGIN = "user[login]"
-        const val PASSWORD = "user[password]"
-        const val REMEMBER = "user[remember_me]"
+    /** Cancels an in-flight re-login and starts a new epoch; returns it. */
+    private suspend fun supersede(): Long = withContext(NonCancellable) {
+        reloginLock.withLock {
+            inFlight?.cancelAndJoin()
+            inFlight = null
+            epoch.incrementAndGet()
+        }
+    }
 
-        /** Pages from AO3 carry the site header; JSON and fragments don't and say nothing about the session. */
-        fun isAo3Page(html: String): Boolean = html.contains("id=\"header\"")
+    /** False (and nothing stored) when the Keystore fails: the session stays live without silent re-login. */
+    private fun saveCredentials(username: String, password: String, name: String): Boolean = try {
+        store.save(username, password)
+        store.saveDisplayName(name)
+        true
+    } catch (_: Exception) {
+        runCatching { store.clear() }
+        false
+    }
 
-        /** The greeting lives in the header: parse only up to the main region (chapter pages are big). */
-        fun header(html: String): String {
+    companion object {
+        /** How long silent re-login stays paused after a failure that wasn't a rejection. */
+        const val PAUSE_MS = 5 * 60_000L
+
+        private val SIGNED_OUT = AccountState(false, null)
+        private const val LOGIN = "user[login]"
+        private const val PASSWORD = "user[password]"
+        private const val REMEMBER = "user[remember_me]"
+
+        /** The greeting and login link live in the header: parse only up to the main region (chapter pages are big). */
+        private fun header(html: String): String {
             val main = html.indexOf("id=\"main\"")
             return if (main > 0) html.substring(0, main) else html
         }
 
         /** Owner's login and password in place; the hidden remember_me "0" kept and a "1" after it, so Rails takes "1". */
-        fun fillLogin(fields: List<Pair<String, String>>, username: String, password: String): List<Pair<String, String>> {
+        private fun fillLogin(fields: List<Pair<String, String>>, username: String, password: String): List<Pair<String, String>> {
             val out = ArrayList<Pair<String, String>>(fields.size + 3)
             var login = false
             var pass = false
@@ -270,7 +378,7 @@ class Session(
             return out
         }
 
-        fun applyOverrides(fields: List<Pair<String, String>>, overrides: List<Pair<String, String>>): List<Pair<String, String>> {
+        private fun applyOverrides(fields: List<Pair<String, String>>, overrides: List<Pair<String, String>>): List<Pair<String, String>> {
             val names = overrides.map { it.first }.toSet()
             val out = ArrayList<Pair<String, String>>(fields.size + overrides.size)
             val placed = HashSet<String>()

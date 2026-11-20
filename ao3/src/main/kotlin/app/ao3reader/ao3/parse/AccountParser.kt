@@ -11,8 +11,9 @@ object AccountParser {
     private val notNames = setOf("login", "logout")
 
     /** Signed in = a `/users/<name>` link directly inside `#greeting`; deeper paths (e.g. /users/x/pseuds/y) are skipped. */
-    fun state(html: String): AccountState {
-        val doc = Jsoup.parse(html)
+    fun state(html: String): AccountState = state(Jsoup.parse(html))
+
+    private fun state(doc: org.jsoup.nodes.Document): AccountState {
         val greeting = doc.selectFirst("#greeting")
         if (greeting != null) {
             for (a in greeting.select("a[href]")) {
@@ -28,6 +29,26 @@ object AccountParser {
         }
         return AccountState(false, null)
     }
+
+    /**
+     * What a page says about the session, with evidence either way: signed in (as [state]), signed out
+     * only when `#header` holds a login link or login form, and null when it shows neither (JSON,
+     * fragments, error pages without the site header).
+     */
+    fun observed(html: String): AccountState? {
+        val doc = Jsoup.parse(html)
+        val signedIn = state(doc)
+        if (signedIn.signedIn) return signedIn
+        val header = doc.selectFirst("#header") ?: return null
+        val loginLink = header.select("a[href]").any { a: Element -> isLoginPath(a.attr("href")) }
+        val loginForm = header.select("form[action]").any { f: Element -> isLoginPath(f.attr("action")) }
+        return if (loginLink || loginForm) AccountState(false, null) else null
+    }
+
+    private fun isLoginPath(href: String): Boolean =
+        href.substringBefore('#').substringBefore('?').trimEnd('/').let {
+            it == "/users/login" || it.endsWith("://archiveofourown.org/users/login")
+        }
 
     fun loginForm(html: String, baseUrl: HttpUrl): Ao3Form? {
         val doc = Jsoup.parse(html)

@@ -41,9 +41,14 @@ interface Fetcher {
     /**
      * Form POST (application/x-www-form-urlencoded). On a Cloudflare challenge: solves once (if interactive) and
      * returns [FetchResult.Blocked] WITHOUT resubmitting — the caller re-GETs the form for a fresh token.
-     * [accept] works as for [get].
+     * [accept] and [interactive] work as for [get] (non-interactive: a challenge or 429 returns at once).
      */
-    suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String? = null): FetchResult
+    suspend fun post(
+        url: HttpUrl,
+        fields: List<Pair<String, String>>,
+        accept: String? = null,
+        interactive: Boolean = true,
+    ): FetchResult
 }
 
 /** OkHttp request tag type: a request tagged with it is sent without the user's AO3 session. */
