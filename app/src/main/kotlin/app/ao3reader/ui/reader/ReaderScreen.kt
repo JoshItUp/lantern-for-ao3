@@ -83,12 +83,13 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 /** What one chapter pane shows; AnimatedContent keeps the outgoing pane's copy only while it slides out. */
-private data class Page(val index: Int, val content: ChapterContent?, val loading: Boolean, val error: FetchResult?)
+private data class Page(val index: Int, val content: ChapterContent?, val showSpinner: Boolean, val error: FetchResult?)
 
 /** A swipe that changed chapter: the pane leaving ([from]) keeps the offset it was released at, so it doesn't jump. */
 private data class SwipeExit(val from: Int, val to: Int, val offset: Float)
 
 private const val SWIPE_FRACTION = 0.3f
+private const val FADE_IN_MS = 180
 private const val FLING_VELOCITY_DP = 800f
 /** Resistance applied to drags that can't change chapter (first/last). */
 private const val EDGE_RESISTANCE = 0.2f
@@ -123,7 +124,7 @@ fun ReaderScreen(vm: ReaderViewModel) {
                 onCentreTap = vm::toggleControls,
             ) { dragOffset, exit ->
                 AnimatedContent(
-                    targetState = Page(s.index, s.content, s.loading, s.error),
+                    targetState = Page(s.index, s.content, s.showSpinner, s.error),
                     contentKey = { it.index },
                     transitionSpec = {
                         val forward = targetState.index > initialState.index
@@ -271,10 +272,19 @@ private fun ChapterPane(
     onRetry: () -> Unit,
 ) {
     val content = page.content
+    // Text that was ready when the pane appeared shows at once; text that arrives later fades in instead of popping.
+    val alpha = remember { Animatable(if (content != null) 1f else 0f) }
+    LaunchedEffect(content != null) {
+        if (content != null) alpha.animateTo(1f, tween(FADE_IN_MS)) else alpha.snapTo(0f)
+    }
     when {
-        content != null -> ChapterText(content, isCurrent, isLast, restore, style, onRestored, onScroll, onNext)
+        content != null -> Box(Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha.value }) {
+            ChapterText(content, isCurrent, isLast, restore, style, onRestored, onScroll, onNext)
+        }
         page.error != null -> ErrorMessage(page.error, onRetry)
-        else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        // Empty background until the load has taken SPINNER_DELAY_MS, so cached swipes never flash a spinner.
+        page.showSpinner -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        else -> Box(Modifier.fillMaxSize())
     }
 }
 

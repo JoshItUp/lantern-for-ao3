@@ -22,6 +22,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -41,6 +44,8 @@ data class ReaderUiState(
     val font: ReaderFont = ReaderFont.SYSTEM,
     /** False when the chapter list failed and [chapters] is a single fallback entry from the loaded chapter. */
     val chapterListLoaded: Boolean = true,
+    /** True once the current load has run for [ReaderViewModel.SPINNER_DELAY_MS]; fast (cached) loads never show a spinner. */
+    val showSpinner: Boolean = false,
 )
 
 /**
@@ -69,6 +74,16 @@ class ReaderViewModel(
     private var fontWrites = 0
 
     init {
+        viewModelScope.launch {
+            // Restarts per chapter: a new index or a retry starts a fresh delay.
+            _state.map { it.loading to it.index }.distinctUntilChanged().collectLatest { (loading, _) ->
+                _state.update { it.copy(showSpinner = false) }
+                if (loading) {
+                    delay(SPINNER_DELAY_MS)
+                    _state.update { it.copy(showSpinner = it.loading) }
+                }
+            }
+        }
         viewModelScope.launch {
             settings.fontSizeSp.collect { sp -> if (fontWrites == 0) _state.update { it.copy(fontSizeSp = sp) } }
         }
@@ -221,6 +236,7 @@ class ReaderViewModel(
 
     companion object {
         const val SAVE_DEBOUNCE_MS = 500L
+        const val SPINNER_DELAY_MS = 350L
         const val MIN_FONT_SP = 14
         const val MAX_FONT_SP = 28
 
