@@ -7,13 +7,16 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsIgnoringVisibility
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -49,6 +52,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.ao3reader.ao3.model.SearchQuery
 import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.data.db.PresetEntity
 import app.ao3reader.data.db.ProgressEntity
@@ -72,10 +76,15 @@ fun continueLabel(p: ProgressEntity): String = "${p.workTitle} — Ch ${p.chapte
 
 /** Preset dialog modes: a new preset from the current query, or renaming an existing one. */
 private sealed interface NameDialog {
-    data class New(val runAfter: Boolean) : NameDialog
+    /**
+     * [pending]: filters from the sheet, applied (and searched) only when the name is confirmed;
+     * cancelling leaves the current query untouched. Null saves the current query as is.
+     */
+    data class New(val pending: SearchQuery? = null) : NameDialog
     data class Rename(val preset: PresetEntity) : NameDialog
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -107,7 +116,12 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
         vm.runSearch()
     }
 
-    Scaffold(containerColor = MaterialTheme.colorScheme.background) { inner ->
+    // Pad for the bars even while the reader has them hidden, so this screen never shifts when
+    // they come back during the pop transition.
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets.systemBarsIgnoringVisibility,
+    ) { inner ->
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -128,7 +142,7 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
                     presets = state.presets,
                     activeId = state.activePresetId,
                     onApply = { focus.clearFocus(); vm.applyPreset(it) },
-                    onNew = { nameDialog = NameDialog.New(runAfter = false) },
+                    onNew = { nameDialog = NameDialog.New() },
                     onRename = { nameDialog = NameDialog.Rename(it) },
                     onUpdate = vm::updatePresetFromCurrent,
                     onDelete = vm::deletePreset,
@@ -182,8 +196,7 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
             },
             onSaveAsPreset = { q ->
                 showFilters = false
-                vm.setQuery(q)
-                nameDialog = NameDialog.New(runAfter = true)
+                nameDialog = NameDialog.New(pending = q)
             },
             onDismiss = { showFilters = false },
         )
@@ -199,8 +212,9 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
                 when (d) {
                     is NameDialog.Rename -> vm.renamePreset(d.preset.id, name)
                     is NameDialog.New -> {
+                        d.pending?.let(vm::setQuery)
                         vm.savePreset(name)
-                        if (d.runAfter) vm.runSearch()
+                        if (d.pending != null) vm.runSearch()
                     }
                 }
             },
@@ -349,11 +363,12 @@ private fun Hint(text: String) {
 private fun PresetNameDialog(title: String, initial: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var name by rememberSaveable { mutableStateOf(initial) }
     val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
+            // Inside the slot, so it runs once the field (and its focusRequester) is attached.
+            LaunchedEffect(Unit) { focusRequester.requestFocus() }
             OutlinedTextField(
                 value = name, onValueChange = { name = it }, singleLine = true, placeholder = { Text("Name") },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),

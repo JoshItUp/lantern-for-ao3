@@ -6,6 +6,7 @@ import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -79,8 +80,10 @@ import app.ao3reader.ao3.model.Block
 import app.ao3reader.ao3.model.ChapterContent
 import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.ui.common.BlockItem
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** What one chapter pane shows; AnimatedContent keeps the outgoing pane's copy only while it slides out. */
 private data class Page(val index: Int, val content: ChapterContent?, val showSpinner: Boolean, val error: FetchResult?)
@@ -89,19 +92,21 @@ private data class Page(val index: Int, val content: ChapterContent?, val showSp
 private data class SwipeExit(val from: Int, val to: Int, val offset: Float)
 
 private const val SWIPE_FRACTION = 0.3f
+private const val CHAPTER_SLIDE_MS = 280
 private const val FADE_IN_MS = 180
 private const val FLING_VELOCITY_DP = 800f
 /** Resistance applied to drags that can't change chapter (first/last). */
 private const val EDGE_RESISTANCE = 0.2f
 
+/** [leaving]: the screen is being popped (a back gesture in progress); the system bars come back at once. */
 @Composable
-fun ReaderScreen(vm: ReaderViewModel) {
+fun ReaderScreen(vm: ReaderViewModel, leaving: Boolean = false) {
     val s by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     var showFontSheet by rememberSaveable { mutableStateOf(false) }
 
-    ImmersiveMode(hidden = !s.controlsVisible)
+    ImmersiveMode(hidden = !s.controlsVisible && !leaving)
     FlushOnStop(vm)
     BackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
 
@@ -122,19 +127,32 @@ fun ReaderScreen(vm: ReaderViewModel) {
                 onNext = vm::next,
                 onPrevious = vm::previous,
                 onCentreTap = vm::toggleControls,
-            ) { dragOffset, exit ->
+            ) { dragOffset, exit, onSettled ->
                 AnimatedContent(
                     targetState = Page(s.index, s.content, s.showSpinner, s.error),
                     contentKey = { it.index },
                     transitionSpec = {
                         val forward = targetState.index > initialState.index
-                        val spec = tween<IntOffset>(280)
-                        slideInHorizontally(spec) { w -> if (forward) w else -w } togetherWith
-                            slideOutHorizontally(spec) { w -> if (forward) -w else w }
+                        // After a swipe the outgoing pane sits at the release offset; start the
+                        // incoming one right beside it and move both by the same distance, so the
+                        // two stay edge to edge with no gap.
+                        val released = exit?.takeIf { it.from == initialState.index && it.to == targetState.index }
+                            ?.offset?.roundToInt() ?: 0
+                        val spec = tween<IntOffset>(CHAPTER_SLIDE_MS)
+                        slideInHorizontally(spec) { w -> (if (forward) w else -w) + released } togetherWith
+                            slideOutHorizontally(spec) { w -> -((if (forward) w else -w) + released) }
                     },
                     label = "chapter",
                 ) { page ->
                     val isCurrent = page.index == s.index
+                    if (isCurrent) {
+                        // Once the incoming pane has fully arrived, the release offset is stale.
+                        LaunchedEffect(Unit) {
+                            snapshotFlow { transition.currentState == EnterExitState.Visible && !transition.isRunning }
+                                .first { it }
+                            onSettled(page.index)
+                        }
+                    }
                     Box(
                         Modifier.fillMaxSize().graphicsLayer {
                             translationX = when {
@@ -197,7 +215,7 @@ private fun ChapterSwiper(
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onCentreTap: () -> Unit,
-    content: @Composable (dragOffset: () -> Float, exit: SwipeExit?) -> Unit,
+    content: @Composable (dragOffset: () -> Float, exit: SwipeExit?, onSettled: (index: Int) -> Unit) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val offset = remember { Animatable(0f) }
@@ -255,7 +273,7 @@ private fun ChapterSwiper(
                 )
             },
     ) {
-        content({ offset.value }, exit)
+        content({ offset.value }, exit) { settled -> if (exit?.to == settled) exit = null }
     }
 }
 
