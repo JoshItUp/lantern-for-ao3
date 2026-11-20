@@ -4,6 +4,9 @@ import android.content.Context
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import app.ao3reader.ao3.net.Ao3Fetcher
+import androidx.room.Room
+import app.ao3reader.data.SettingsStore
+import app.ao3reader.data.db.AppDatabase
 import app.ao3reader.net.PersistentCookieJar
 import app.ao3reader.net.WebViewChallengeSolver
 import okhttp3.Cache
@@ -27,4 +30,10 @@ class AppContainer(val context: Context) {
     val fetcher: Ao3Fetcher by lazy {
         Ao3Fetcher(okHttpClient, userAgent, WebViewChallengeSolver(context, userAgent))
     }
+
+    val db: AppDatabase by lazy {
+        Room.databaseBuilder(context, AppDatabase::class.java, "ao3reader.db").build()
+    }
+
+    val settings: SettingsStore by lazy { SettingsStore(context) }
 }
