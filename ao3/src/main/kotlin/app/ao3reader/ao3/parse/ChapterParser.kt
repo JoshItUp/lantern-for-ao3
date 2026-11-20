@@ -45,12 +45,12 @@ object ChapterParser {
         }.orEmpty()
 
         fun notes(scope: Element?, sel: String): List<Block> =
-            scope?.selectFirst(sel)?.let { el: Element -> BlockConverter.convert(el) }.orEmpty()
+            scope?.select(sel).orEmpty().flatMap { el: Element -> BlockConverter.convert(el) }
 
         val chapterNotes = notes(chapterPreface, ".notes.module:not(.end) blockquote.userstuff")
-        val beginNotes = chapterNotes.ifEmpty {
-            if (ref.number == 1) notes(workPreface, ".notes.module:not(.end) blockquote.userstuff") else emptyList()
-        }
+        val workNotes = if (ref.number == 1) notes(workPreface, ".notes.module:not(.end) blockquote.userstuff") else emptyList()
+        val beginNotes = workNotes + chapterNotes
+        // chapter end notes (inside #chapters) precede work end notes (#work_endnotes) in document order
         val endNotes = notes(skin, "div.end.notes.module blockquote.userstuff")
         val summary = if (ref.number == 1) notes(workPreface, "div.summary blockquote.userstuff") else emptyList()
 
