@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 @Immutable
@@ -70,6 +72,7 @@ class ReaderViewModel(
     private var saveJob: Job? = null
     /** Scroll position reported but not yet written, captured with the chapter it belongs to. */
     private var pending: ProgressEntity? = null
+    private val writeLock = Mutex()
     /** Font writes in flight; settings emissions are ignored meanwhile so a slider drag doesn't jump back. */
     private var fontWrites = 0
 
@@ -195,7 +198,8 @@ class ReaderViewModel(
             workTitle = content.workTitle,
             chapterId = ref.chapterId,
             chapterNumber = ref.number,
-            chaptersTotal = s.chapters.size.takeIf { s.chapterListLoaded },
+            // On the single-entry fallback list the total is unknown: keep the one already saved.
+            chaptersTotal = if (s.chapterListLoaded) s.chapters.size else saved?.chaptersTotal,
             blockIndex = blockIndex,
             blockOffsetPx = offsetPx,
             updatedAt = 0L,
@@ -214,11 +218,19 @@ class ReaderViewModel(
         saveJob = viewModelScope.launch { withContext(NonCancellable) { writePending() } }
     }
 
+    /**
+     * The upsert runs to completion even if the calling job is cancelled (a new scroll or a flush),
+     * and [pending] is only cleared once it is written, unless a newer position replaced it meanwhile.
+     * Writes are serialised so an older position can't land after a newer one.
+     */
     private suspend fun writePending() {
-        val entity = pending?.copy(updatedAt = clock()) ?: return
-        pending = null
+        val p = pending ?: return
+        val entity = p.copy(updatedAt = clock())
         saved = entity
-        progressDao.upsert(entity)
+        withContext(NonCancellable) {
+            writeLock.withLock { progressDao.upsert(entity) }
+            if (pending === p) pending = null
+        }
     }
 
     fun setFontSize(sp: Int) {
