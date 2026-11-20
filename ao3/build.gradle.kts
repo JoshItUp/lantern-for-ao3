@@ -17,7 +17,7 @@ kotlin {
 }
 
 dependencies {
-    implementation(libs.okhttp)
+    api(libs.okhttp)
     implementation(libs.jsoup)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
