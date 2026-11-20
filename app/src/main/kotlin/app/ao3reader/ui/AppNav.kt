@@ -1,5 +1,11 @@
 package app.ao3reader.ui
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
@@ -27,10 +33,31 @@ object Routes {
         "reader/$workId?$ARG_NUMBER=$number" + (chapterId?.let { "&$ARG_CHAPTER_ID=$it" } ?: "")
 }
 
+/** Short screen transitions (the NavHost default is a ~700 ms crossfade). */
+private const val ENTER_MS = 220
+private const val EXIT_MS = 200
+private const val UNDER_MS = 150
+private const val SCALE_FROM = 0.96f
+
 @Composable
 fun AppNav(container: AppContainer) {
     val nav = rememberNavController()
-    NavHost(navController = nav, startDestination = Routes.SEARCH) {
+    NavHost(
+        navController = nav,
+        startDestination = Routes.SEARCH,
+        // Forward: the new screen fades in while growing slightly; the one beneath fades out quickly.
+        enterTransition = {
+            fadeIn(tween(ENTER_MS, easing = FastOutSlowInEasing)) +
+                scaleIn(tween(ENTER_MS, easing = FastOutSlowInEasing), initialScale = SCALE_FROM)
+        },
+        exitTransition = { fadeOut(tween(UNDER_MS, easing = FastOutSlowInEasing)) },
+        // Back: the mirror image.
+        popEnterTransition = { fadeIn(tween(UNDER_MS, easing = FastOutSlowInEasing)) },
+        popExitTransition = {
+            fadeOut(tween(EXIT_MS, easing = FastOutSlowInEasing)) +
+                scaleOut(tween(EXIT_MS, easing = FastOutSlowInEasing), targetScale = SCALE_FROM)
+        },
+    ) {
         composable(Routes.SEARCH) {
             val vm: SearchViewModel = viewModel(factory = SearchViewModel.factory(container))
             SearchScreen(vm) { workId, chapterId, number ->
