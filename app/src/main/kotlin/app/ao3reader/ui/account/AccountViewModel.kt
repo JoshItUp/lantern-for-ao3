@@ -81,6 +81,12 @@ private const val CONNECTION_ERROR = "Couldn't sign in. Check your connection."
 class AccountViewModel(private val source: AccountSource) : ViewModel() {
     private data class Local(
         val busy: Boolean = false,
+        /**
+         * A sign-in call is in flight. Session flips its state to signed in before it saves the
+         * credentials, so until the call returns the screen keeps the form (and its spinner): no
+         * signed-in view and no false "couldn't be saved" note mid-flight.
+         */
+        val signingIn: Boolean = false,
         val error: String? = null,
         val confirmSignOut: Boolean = false,
         val close: Boolean = false,
@@ -94,8 +100,8 @@ class AccountViewModel(private val source: AccountSource) : ViewModel() {
             .stateIn(viewModelScope, SharingStarted.Eagerly, merge(source.state.value, source.credentialsSaved.value, local.value))
 
     private fun merge(account: AccountState, saved: Boolean, l: Local) = AccountUiState(
-        signedIn = account.signedIn,
-        username = account.username,
+        signedIn = account.signedIn && !l.signingIn,
+        username = if (l.signingIn) null else account.username,
         credentialsSaved = saved,
         busy = l.busy,
         error = l.error,
@@ -108,7 +114,7 @@ class AccountViewModel(private val source: AccountSource) : ViewModel() {
 
     fun signIn(username: String, password: String) {
         if (!canSubmit(username, password)) return
-        local.update { it.copy(busy = true, error = null, close = false) }
+        local.update { it.copy(busy = true, signingIn = true, error = null, close = false) }
         viewModelScope.launch {
             val result = try {
                 source.signIn(username.trim(), password)
@@ -120,7 +126,7 @@ class AccountViewModel(private val source: AccountSource) : ViewModel() {
             val ok = result == SignInResult.Ok
             // Without saved credentials stay here, so the owner sees the note about it.
             val close = ok && source.credentialsSaved.value
-            local.update { it.copy(busy = false, error = signInErrorMessage(result), close = close) }
+            local.update { it.copy(busy = false, signingIn = false, error = signInErrorMessage(result), close = close) }
         }
     }
 

@@ -1,5 +1,6 @@
 package app.ao3reader.ui.library
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -26,6 +27,8 @@ fun LibraryPlaceholder(signedIn: Boolean, bottomBarHeight: Dp, onAccount: () -> 
     Column(
         Modifier
             .fillMaxSize()
+            // Opaque, so the tab crossfade never shows the window behind.
+            .background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.systemBarsIgnoringVisibility)
             .padding(start = 24.dp, end = 24.dp, bottom = bottomBarHeight),
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),

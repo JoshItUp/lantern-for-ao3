@@ -64,6 +64,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -196,10 +197,11 @@ fun SearchScreen(
             Box(
                 Modifier
                     .onSizeChanged {
-                        // The sign-in banner can change the height: a fully hidden bar stays fully hidden.
+                        // The sign-in banner can change the height: a fully hidden bar stays fully hidden,
+                        // and a shrinking bar's offset is re-coerced into the new limit (the setter clamps).
                         val hidden = barState.heightOffsetLimit < 0f && barState.heightOffset <= barState.heightOffsetLimit
                         barState.heightOffsetLimit = -it.height.toFloat()
-                        if (hidden) barState.heightOffset = barState.heightOffsetLimit
+                        barState.heightOffset = if (hidden) barState.heightOffsetLimit else barState.heightOffset
                     }
                     .graphicsLayer { translationY = barState.heightOffset }
                     // Swallow taps on the bar's blank area and status strip so they never reach the
@@ -467,7 +469,7 @@ private fun SignInBanner(onAccount: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(10.dp))
-            .clickable(onClick = onAccount)
+            .clickable(role = Role.Button, onClickLabel = "Sign in", onClick = onAccount)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         Text(

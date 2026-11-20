@@ -103,7 +103,7 @@ private fun SignedIn(state: AccountUiState, onSignOut: () -> Unit) {
         style = MaterialTheme.typography.titleMedium,
         color = MaterialTheme.colorScheme.onBackground,
     )
-    if (!state.credentialsSaved) {
+    if (!state.credentialsSaved && !state.busy) {
         Text(
             "Signed in, but your password couldn't be saved — you may need to sign in again later.",
             style = MaterialTheme.typography.bodySmall,
