@@ -5,6 +5,7 @@ import android.webkit.CookieManager
 import android.webkit.WebSettings
 import app.ao3reader.ao3.net.Ao3Fetcher
 import androidx.room.Room
+import app.ao3reader.data.ChapterCache
 import app.ao3reader.data.SettingsStore
 import app.ao3reader.data.db.AppDatabase
 import app.ao3reader.net.PersistentCookieJar
@@ -36,4 +37,6 @@ class AppContainer(val context: Context) {
     }
 
     val settings: SettingsStore by lazy { SettingsStore(context) }
+
+    val chapterCache: ChapterCache by lazy { ChapterCache(File(context.cacheDir, "chapters")) }
 }
