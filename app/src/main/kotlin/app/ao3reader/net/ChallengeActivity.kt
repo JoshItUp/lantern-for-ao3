@@ -8,6 +8,8 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.window.OnBackInvokedDispatcher
 import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -35,7 +37,7 @@ class ChallengeActivity : Activity() {
             deliver(false)
         }
         val url = intent.getStringExtra(EXTRA_URL)
-        if (url == null) {
+        if (url == null || !isAllowedChallengeUrl(url)) {
             deliver(false)
             return
         }
@@ -50,8 +52,18 @@ class ChallengeActivity : Activity() {
             setBackgroundColor(bg)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            settings.setGeolocationEnabled(false)
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             intent.getStringExtra(EXTRA_UA)?.let { settings.userAgentString = it }
             webViewClient = object : WebViewClient() {
+                // Top-level navigation stays on AO3 / Cloudflare; anything else (other sites,
+                // intent: links, app links) is dropped rather than opened. Subframes are left
+                // alone so Cloudflare's widget can load its own frames.
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
+                    request.isForMainFrame && !isAllowedChallengeUrl(request.url.toString())
+
                 override fun onPageFinished(view: WebView, finishedUrl: String?) {
                     checkPage(view)
                 }

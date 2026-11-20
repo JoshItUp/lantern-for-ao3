@@ -3,6 +3,7 @@ package app.ao3reader
 import android.content.Context
 import android.webkit.CookieManager
 import android.webkit.WebSettings
+import androidx.webkit.WebViewCompat
 import app.ao3reader.ao3.net.Ao3Fetcher
 import app.ao3reader.ao3.net.Fetcher
 import androidx.room.Room
@@ -14,20 +15,31 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import app.ao3reader.data.db.AppDatabase
+import app.ao3reader.net.DeferredFetcher
 import app.ao3reader.net.PersistentCookieJar
+import app.ao3reader.net.cachedUserAgent
 import app.ao3reader.net.WebViewChallengeSolver
 import okhttp3.Cache
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.TimeUnit
 
-/** Manual dependency container. Later tasks add properties. */
+/**
+ * Manual dependency container. Nothing here may touch WebView or CookieManager at app start: the
+ * network stack is built by [DeferredFetcher] on the first request, off the main thread.
+ */
 class AppContainer(val context: Context) {
-    val userAgent: String by lazy { WebSettings.getDefaultUserAgent(context) }
+    /** Cached per WebView version; computing it loads Chromium. */
+    val userAgent: String by lazy {
+        cachedUserAgent(
+            context.getSharedPreferences("webview", Context.MODE_PRIVATE),
+            WebViewCompat.getCurrentWebViewPackage(context)?.versionName,
+        ) { WebSettings.getDefaultUserAgent(context) }
+    }
 
     val okHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .cookieJar(PersistentCookieJar(CookieManager.getInstance()))
+            .cookieJar(PersistentCookieJar { CookieManager.getInstance() })
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .cache(Cache(File(context.cacheDir, "http"), 10L * 1024 * 1024))
@@ -36,7 +48,7 @@ class AppContainer(val context: Context) {
 
     val fetcher: Fetcher by lazy {
         DumpingFetcher(
-            Ao3Fetcher(okHttpClient, userAgent, WebViewChallengeSolver(context, userAgent)),
+            DeferredFetcher { Ao3Fetcher(okHttpClient, userAgent, WebViewChallengeSolver(context, userAgent)) },
             pageDump(context),
         )
     }

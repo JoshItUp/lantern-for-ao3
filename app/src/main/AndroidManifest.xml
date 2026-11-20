@@ -5,7 +5,9 @@
 
     <application
         android:name=".App"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
         android:label="AO3 Reader"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity
