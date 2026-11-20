@@ -18,31 +18,22 @@ class WebViewChallengeSolver(
     private val mutex = Mutex()
 
     override suspend fun solve(url: HttpUrl): Boolean = mutex.withLock {
-        val deferred = CompletableDeferred<Boolean>()
-        pending = deferred
+        val (token, deferred) = ChallengeRegistry.begin()
         try {
             appContext.startActivity(
                 Intent(appContext, ChallengeActivity::class.java)
                     .putExtra(ChallengeActivity.EXTRA_URL, url.toString())
                     .putExtra(ChallengeActivity.EXTRA_UA, userAgent)
+                    .putExtra(ChallengeActivity.EXTRA_TOKEN, token)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
             withTimeoutOrNull(timeoutMs) { deferred.await() } ?: false
         } catch (e: RuntimeException) {
             false
         } finally {
-            if (pending === deferred) pending = null
+            ChallengeRegistry.end(token)
             deferred.complete(false)
-            ChallengeActivity.requestFinish()
-        }
-    }
-
-    companion object {
-        @Volatile
-        internal var pending: CompletableDeferred<Boolean>? = null
-
-        internal fun complete(result: Boolean) {
-            pending?.complete(result)
+            ChallengeActivity.requestFinish(token)
         }
     }
 }

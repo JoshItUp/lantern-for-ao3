@@ -19,10 +19,17 @@ import java.lang.ref.WeakReference
 class ChallengeActivity : Activity() {
     private var webView: WebView? = null
     private var delivered = false
+    private var token = -1L
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        token = intent.getLongExtra(EXTRA_TOKEN, -1L)
+        if (!ChallengeRegistry.isCurrent(token)) {
+            delivered = true
+            finish()
+            return
+        }
         current = WeakReference(this)
         onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT) {
             deliver(false)
@@ -64,13 +71,11 @@ class ChallengeActivity : Activity() {
 
     private fun checkPage(view: WebView) {
         view.evaluateJavascript(
-            "(function(){return document.title + '\u0001' + document.documentElement.outerHTML;})()",
+            "(function(){return JSON.stringify([document.title, document.documentElement.outerHTML]);})()",
         ) { raw ->
             if (delivered || isDestroyed) return@evaluateJavascript
-            val text = raw ?: ""
-            val title = text.substringBefore("\u0001")
-            val challenge = title.contains("Just a moment", ignoreCase = true) ||
-                text.contains("may be a robot", ignoreCase = true)
+            val (title, html) = decodeTitleAndHtml(raw) ?: return@evaluateJavascript
+            val challenge = isChallengePage(title, html)
             if (!challenge) {
                 CookieManager.getInstance().flush()
                 deliver(true)
@@ -81,14 +86,14 @@ class ChallengeActivity : Activity() {
     private fun deliver(ok: Boolean) {
         if (delivered) return
         delivered = true
-        WebViewChallengeSolver.complete(ok)
+        ChallengeRegistry.complete(token, ok)
         finish()
     }
 
     override fun onDestroy() {
         if (!delivered) {
             delivered = true
-            WebViewChallengeSolver.complete(false)
+            ChallengeRegistry.complete(token, false)
         }
         if (current?.get() === this) current = null
         webView?.let {
@@ -102,11 +107,12 @@ class ChallengeActivity : Activity() {
     companion object {
         const val EXTRA_URL = "url"
         const val EXTRA_UA = "ua"
+        const val EXTRA_TOKEN = "token"
         private var current: WeakReference<ChallengeActivity>? = null
 
         /** Closes a lingering window (e.g. after timeout). */
-        internal fun requestFinish() {
-            current?.get()?.let { a -> a.runOnUiThread { a.finish() } }
+        internal fun requestFinish(token: Long) {
+            current?.get()?.takeIf { it.token == token }?.let { a -> a.runOnUiThread { a.finish() } }
         }
     }
 }

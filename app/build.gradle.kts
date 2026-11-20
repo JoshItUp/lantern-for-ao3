@@ -72,7 +72,6 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.robolectric)
-    testImplementation("androidx.test:core:1.6.1")
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }
