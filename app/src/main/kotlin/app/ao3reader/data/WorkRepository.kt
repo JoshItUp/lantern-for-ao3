@@ -87,7 +87,8 @@ class WorkRepository(
             scope.launch {
                 try {
                     if (withContext(ioDispatcher) { cache.get(workId, key) } != null) return@launch
-                    val r = fetcher.get(Ao3Urls.chapter(workId, ref.chapterId))
+                    // Background work: a challenge is left for the next reader load to solve.
+                    val r = fetcher.get(Ao3Urls.chapter(workId, ref.chapterId), interactive = false)
                     if (r is FetchResult.Ok && withContext(parseDispatcher) { ChapterParser.looksLikeChapterPage(r.html) }) withContext(ioDispatcher) { cache.put(workId, key, r.html) }
                 } catch (e: CancellationException) {
                     throw e

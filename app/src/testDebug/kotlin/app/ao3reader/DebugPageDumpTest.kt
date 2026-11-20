@@ -17,7 +17,10 @@ class DebugPageDumpTest {
 
     private class Stub(val result: FetchResult) : Fetcher {
         var lastAccept: String? = "unset"
-        override suspend fun get(url: HttpUrl, accept: String?): FetchResult { lastAccept = accept; return result }
+        var lastInteractive: Boolean? = null
+        override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean): FetchResult {
+            lastAccept = accept; lastInteractive = interactive; return result
+        }
     }
 
     @Test fun passesAcceptThrough() = runBlocking {
@@ -27,6 +30,9 @@ class DebugPageDumpTest {
         assertEquals("application/json", stub.lastAccept)
         f.get("https://archiveofourown.org/works/1".toHttpUrl())
         assertEquals(null, stub.lastAccept)
+        assertEquals(true, stub.lastInteractive)
+        f.get("https://archiveofourown.org/works/1".toHttpUrl(), interactive = false)
+        assertEquals(false, stub.lastInteractive)
     }
 
     private fun fetch(dir: java.io.File, result: FetchResult, url: String) = runBlocking {

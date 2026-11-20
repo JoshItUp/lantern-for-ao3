@@ -37,7 +37,7 @@ class Ao3Fetcher(
 
     private class Raw(val code: Int, val headers: Headers, val body: String, val finalUrl: HttpUrl)
 
-    override suspend fun get(url: HttpUrl, accept: String?): FetchResult = mutex.withLock {
+    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean): FetchResult = mutex.withLock {
         var rateRetried = false
         var solved = false
         // Bounded: each branch that loops sets a once-only flag first.
@@ -51,7 +51,8 @@ class Ao3Fetcher(
             }
 
             if (isChallenge(raw.code, raw.headers, raw.body)) {
-                if (solved) return@withLock FetchResult.Blocked
+                // Background fetches never pop the challenge window or hold the lock while it waits.
+                if (solved || !interactive) return@withLock FetchResult.Blocked
                 solved = true
                 val ok = try {
                     solver.solve(url)
