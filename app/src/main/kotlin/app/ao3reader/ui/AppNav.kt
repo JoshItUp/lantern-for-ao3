@@ -1,15 +1,6 @@
 package app.ao3reader.ui
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -17,6 +8,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import app.ao3reader.AppContainer
+import app.ao3reader.ui.reader.ReaderScreen
+import app.ao3reader.ui.reader.ReaderViewModel
 import app.ao3reader.ui.search.SearchScreen
 import app.ao3reader.ui.search.SearchViewModel
 
@@ -53,28 +46,11 @@ fun AppNav(container: AppContainer) {
             ),
         ) { entry ->
             val args = entry.arguments
-            ReaderPlaceholder(
-                workId = args?.getLong(Routes.ARG_WORK_ID) ?: 0L,
-                chapterId = args?.getString(Routes.ARG_CHAPTER_ID)?.toLongOrNull(),
-                number = args?.getInt(Routes.ARG_NUMBER) ?: 1,
-            )
+            val workId = args?.getLong(Routes.ARG_WORK_ID) ?: 0L
+            val chapterId = args?.getString(Routes.ARG_CHAPTER_ID)?.toLongOrNull()
+            val number = args?.getInt(Routes.ARG_NUMBER) ?: 1
+            val vm: ReaderViewModel = viewModel(factory = ReaderViewModel.factory(container, workId, chapterId, number))
+            ReaderScreen(vm)
         }
-    }
-}
-
-/** Replaced by the real reader in Task 11. */
-@Composable
-private fun ReaderPlaceholder(workId: Long, chapterId: Long?, number: Int) {
-    Column(
-        Modifier.fillMaxSize().safeDrawingPadding(),
-        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text("Reader coming in Task 11", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "Work $workId · chapter $number" + (chapterId?.let { " ($it)" } ?: ""),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }

@@ -16,19 +16,26 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
+/** What the reader needs from [WorkRepository]; an interface so the ViewModel can be tested with a fake. */
+interface ChapterSource {
+    suspend fun chapters(workId: Long): Loaded<List<ChapterRef>>
+    suspend fun chapter(workId: Long, ref: ChapterRef): Loaded<ChapterContent>
+    fun prefetch(workId: Long, ref: ChapterRef)
+}
+
 class WorkRepository(
     private val fetcher: Fetcher,
     private val cache: ChapterCache,
     private val scope: CoroutineScope,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val parseDispatcher: CoroutineDispatcher = Dispatchers.Default,
-) {
+) : ChapterSource {
     private val chapterLists = object : LinkedHashMap<Long, List<ChapterRef>>(32, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, List<ChapterRef>>?) = size > MAX_MEMOIZED
     }
     private val inFlight: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    suspend fun chapters(workId: Long): Loaded<List<ChapterRef>> {
+    override suspend fun chapters(workId: Long): Loaded<List<ChapterRef>> {
         synchronized(chapterLists) { chapterLists[workId] }?.let { return Loaded.Ok(it) }
         return when (val r = fetcher.get(Ao3Urls.navigate(workId))) {
             is FetchResult.Ok -> {
@@ -40,7 +47,7 @@ class WorkRepository(
         }
     }
 
-    suspend fun chapter(workId: Long, ref: ChapterRef): Loaded<ChapterContent> {
+    override suspend fun chapter(workId: Long, ref: ChapterRef): Loaded<ChapterContent> {
         val key = keyOf(ref)
         val cached = withContext(ioDispatcher) { cache.get(workId, key) }
         if (cached != null) {
@@ -69,7 +76,7 @@ class WorkRepository(
             }
         }
 
-    fun prefetch(workId: Long, ref: ChapterRef) {
+    override fun prefetch(workId: Long, ref: ChapterRef) {
         val key = keyOf(ref)
         val flightKey = "$workId/$key"
         if (!inFlight.add(flightKey)) return
