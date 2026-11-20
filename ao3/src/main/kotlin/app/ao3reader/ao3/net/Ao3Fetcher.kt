@@ -5,6 +5,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import okhttp3.CacheControl
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.FormBody
@@ -24,6 +25,7 @@ private const val ROBOT_HINT = "may be a robot"
 private const val DEFAULT_RETRY_AFTER_SEC = 60L
 /** Longer waits are returned to the caller instead of sleeping while every other request queues behind us. */
 private const val MAX_RETRY_WAIT_SEC = 30L
+private val ANONYMOUS_CACHE_CONTROL = CacheControl.Builder().noCache().noStore().build()
 
 class Ao3Fetcher(
     private val client: OkHttpClient,
@@ -41,7 +43,13 @@ class Ao3Fetcher(
     override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean): FetchResult =
         fetch(url, interactive = interactive, resendAfterSolve = true) {
             Request.Builder().url(url).headers(accept).apply {
-                if (anonymous) tag(Anonymous::class.java, Anonymous)
+                if (anonymous) {
+                    tag(Anonymous::class.java, Anonymous)
+                    // The HTTP cache is keyed by URL alone and is answered before network interceptors run:
+                    // a cached signed-in response (and its Set-Cookie) must never serve an anonymous request,
+                    // nor an anonymous one be stored for a signed-in request.
+                    cacheControl(ANONYMOUS_CACHE_CONTROL)
+                }
             }.build()
         }
 
