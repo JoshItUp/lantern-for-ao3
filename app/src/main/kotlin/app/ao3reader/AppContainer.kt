@@ -6,7 +6,12 @@ import android.webkit.WebSettings
 import app.ao3reader.ao3.net.Ao3Fetcher
 import androidx.room.Room
 import app.ao3reader.data.ChapterCache
+import app.ao3reader.data.SearchRepository
 import app.ao3reader.data.SettingsStore
+import app.ao3reader.data.WorkRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import app.ao3reader.data.db.AppDatabase
 import app.ao3reader.net.PersistentCookieJar
 import app.ao3reader.net.WebViewChallengeSolver
@@ -39,4 +44,10 @@ class AppContainer(val context: Context) {
     val settings: SettingsStore by lazy { SettingsStore(context) }
 
     val chapterCache: ChapterCache by lazy { ChapterCache(File(context.cacheDir, "chapters")) }
+
+    val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    val searchRepo: SearchRepository by lazy { SearchRepository(fetcher) }
+
+    val workRepo: WorkRepository by lazy { WorkRepository(fetcher, chapterCache, appScope) }
 }
