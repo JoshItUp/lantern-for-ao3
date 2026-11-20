@@ -25,7 +25,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Personal sideloaded app: sign with the local debug keystore (never committed).
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -71,6 +75,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.webkit)
+    implementation(libs.androidx.profileinstaller)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.jsoup)
 
