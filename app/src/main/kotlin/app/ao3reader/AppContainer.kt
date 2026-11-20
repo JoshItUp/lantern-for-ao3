@@ -4,6 +4,7 @@ import android.content.Context
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import app.ao3reader.ao3.net.Ao3Fetcher
+import app.ao3reader.ao3.net.Fetcher
 import androidx.room.Room
 import app.ao3reader.data.ChapterCache
 import app.ao3reader.data.SearchRepository
@@ -33,8 +34,11 @@ class AppContainer(val context: Context) {
             .build()
     }
 
-    val fetcher: Ao3Fetcher by lazy {
-        Ao3Fetcher(okHttpClient, userAgent, WebViewChallengeSolver(context, userAgent))
+    val fetcher: Fetcher by lazy {
+        DumpingFetcher(
+            Ao3Fetcher(okHttpClient, userAgent, WebViewChallengeSolver(context, userAgent)),
+            pageDump(context),
+        )
     }
 
     val db: AppDatabase by lazy {
