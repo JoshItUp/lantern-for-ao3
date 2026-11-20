@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -35,6 +37,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -176,6 +179,9 @@ fun FilterSheet(
     }
 }
 
+private const val MIN_SUGGEST_CHARS = 2
+private const val MAX_SUGGESTIONS = 8
+
 private fun <T> Set<T>.toggle(v: T): Set<T> = if (v in this) this - v else this + v
 
 @Composable
@@ -241,7 +247,7 @@ private fun TagInput(
     var suggestions by remember(kind) { mutableStateOf(emptyList<String>()) }
     // Restarting on every keystroke cancels the previous wait, so this debounces (the flow waits 300 ms).
     LaunchedEffect(kind, text) {
-        if (text.isBlank()) suggestions = emptyList()
+        if (text.trim().length < MIN_SUGGEST_CHARS) suggestions = emptyList()
         autocomplete(kind, text).collect { suggestions = it }
     }
     fun add(tag: String) {
@@ -272,10 +278,21 @@ private fun TagInput(
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { add(text) }),
         )
-        val shown = suggestions.filter { it !in values }.take(8)
-        if (shown.isNotEmpty() && text.isNotBlank()) {
+        val shown = suggestions.filter { it !in values }.take(MAX_SUGGESTIONS)
+        // The sheet's scroll only brings the focused field into view; scroll again so the list
+        // below it isn't left behind the keyboard.
+        val bringIntoView = remember { BringIntoViewRequester() }
+        LaunchedEffect(shown) {
+            if (shown.isEmpty()) return@LaunchedEffect
+            withFrameNanos { } // let the list be measured and placed first
+            bringIntoView.bringIntoView()
+        }
+        if (shown.isNotEmpty() && text.trim().length >= MIN_SUGGEST_CHARS) {
             Column(
-                Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(8.dp)),
+                Modifier
+                    .fillMaxWidth()
+                    .bringIntoViewRequester(bringIntoView)
+                    .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(8.dp)),
             ) {
                 shown.forEach { s ->
                     Text(

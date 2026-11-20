@@ -22,6 +22,11 @@ class SearchRepository(
     private val fetcher: Fetcher,
     private val parseDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : SearchSource {
+    companion object {
+        /** What AO3's own JS sends; the autocomplete controller only responds to JSON. */
+        const val AUTOCOMPLETE_ACCEPT = "application/json, text/javascript, */*; q=0.01"
+    }
+
     override suspend fun search(q: SearchQuery, page: Int): Loaded<WorkPage> =
         when (val r = fetcher.get(q.toUrl(page))) {
             is FetchResult.Ok -> Loaded.Ok(withContext(parseDispatcher) { BlurbParser.parsePage(r.html, page) })
@@ -31,7 +36,7 @@ class SearchRepository(
     override suspend fun autocomplete(kind: String, term: String): List<String> {
         val t = term.trim()
         if (t.length < 2) return emptyList()
-        val r = fetcher.get(Ao3Urls.autocomplete(kind, t)) as? FetchResult.Ok ?: return emptyList()
+        val r = fetcher.get(Ao3Urls.autocomplete(kind, t), accept = AUTOCOMPLETE_ACCEPT) as? FetchResult.Ok ?: return emptyList()
         return withContext(parseDispatcher) { Autocomplete.parse(r.html) }
     }
 }

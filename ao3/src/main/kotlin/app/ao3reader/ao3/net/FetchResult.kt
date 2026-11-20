@@ -19,5 +19,9 @@ fun interface ChallengeSolver {
 }
 
 interface Fetcher {
-    suspend fun get(url: HttpUrl): FetchResult
+    /**
+     * [accept] non-null marks an XHR-style request: the fetcher sends it as `Accept` together with
+     * `X-Requested-With: XMLHttpRequest` (AO3's JSON endpoints answer 406 without them).
+     */
+    suspend fun get(url: HttpUrl, accept: String? = null): FetchResult
 }

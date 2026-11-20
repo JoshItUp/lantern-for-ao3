@@ -17,8 +17,8 @@ interface PageDump {
 
 /** Fetcher decorator that hands every Ok body to [dump] off the main thread, ignoring failures. */
 class DumpingFetcher(private val delegate: Fetcher, private val dump: PageDump) : Fetcher {
-    override suspend fun get(url: HttpUrl): FetchResult {
-        val result = delegate.get(url)
+    override suspend fun get(url: HttpUrl, accept: String?): FetchResult {
+        val result = delegate.get(url, accept)
         if (result is FetchResult.Ok && dump !== PageDump.None) {
             withContext(Dispatchers.IO) {
                 try { dump.dump(result.finalUrl, result.html) } catch (_: Exception) { }

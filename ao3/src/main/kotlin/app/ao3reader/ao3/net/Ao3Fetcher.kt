@@ -28,13 +28,13 @@ class Ao3Fetcher(
 
     private class Raw(val code: Int, val headers: Headers, val body: String, val finalUrl: HttpUrl)
 
-    override suspend fun get(url: HttpUrl): FetchResult = mutex.withLock {
+    override suspend fun get(url: HttpUrl, accept: String?): FetchResult = mutex.withLock {
         var rateRetried = false
         var solved = false
         // Bounded: each branch that loops sets a once-only flag first.
         while (true) {
             val raw = try {
-                request(url)
+                request(url, accept)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: IOException) {
@@ -73,13 +73,18 @@ class Ao3Fetcher(
         error("unreachable")
     }
 
-    private suspend fun request(url: HttpUrl): Raw {
+    private suspend fun request(url: HttpUrl, accept: String?): Raw {
         lastStart?.let { last ->
             val wait = minIntervalMs - (clock() - last)
             if (wait > 0) sleep(wait)
         }
         lastStart = clock()
-        val req = Request.Builder().url(url).header("User-Agent", userAgent).build()
+        val req = Request.Builder().url(url).header("User-Agent", userAgent).apply {
+            if (accept != null) {
+                header("Accept", accept)
+                header("X-Requested-With", "XMLHttpRequest")
+            }
+        }.build()
         return withContext(Dispatchers.IO) {
             client.newCall(req).execute().use { resp ->
                 Raw(resp.code, resp.headers, resp.body.string(), resp.request.url)

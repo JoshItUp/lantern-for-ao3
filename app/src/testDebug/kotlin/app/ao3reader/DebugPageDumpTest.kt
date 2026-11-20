@@ -16,7 +16,17 @@ class DebugPageDumpTest {
     @get:Rule val tmp = TemporaryFolder()
 
     private class Stub(val result: FetchResult) : Fetcher {
-        override suspend fun get(url: HttpUrl) = result
+        var lastAccept: String? = "unset"
+        override suspend fun get(url: HttpUrl, accept: String?): FetchResult { lastAccept = accept; return result }
+    }
+
+    @Test fun passesAcceptThrough() = runBlocking {
+        val stub = Stub(FetchResult.NotFound)
+        val f = DumpingFetcher(stub, DebugPageDump(tmp.newFolder("a")))
+        f.get("https://archiveofourown.org/autocomplete/tag?term=ab".toHttpUrl(), accept = "application/json")
+        assertEquals("application/json", stub.lastAccept)
+        f.get("https://archiveofourown.org/works/1".toHttpUrl())
+        assertEquals(null, stub.lastAccept)
     }
 
     private fun fetch(dir: java.io.File, result: FetchResult, url: String) = runBlocking {
