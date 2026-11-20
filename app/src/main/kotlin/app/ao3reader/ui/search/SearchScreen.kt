@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +59,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -108,9 +110,13 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
     var showFilters by rememberSaveable { mutableStateOf(false) }
     var nameDialog by remember { mutableStateOf<NameDialog?>(null) }
 
-    // Local text keeps typing smooth; it follows the query when a preset or the sheet changes it.
+    // The field's text stays local while typing (no query update, so the list never recomposes per
+    // keystroke). It is committed into the query by commitText() before anything reads the query
+    // (search, Filters, preset save/update), and follows the query on every new search below.
     var text by rememberSaveable { mutableStateOf(state.query.anyField) }
-    LaunchedEffect(state.query.anyField) { if (text != state.query.anyField) text = state.query.anyField }
+    fun commitText() {
+        if (state.query.anyField != text) vm.setQuery(state.query.copy(anyField = text))
+    }
 
     val nearEnd by remember {
         derivedStateOf {
@@ -130,21 +136,30 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
     val barState = rememberTopAppBarState()
     val barScroll = remember(barState, listState) { QuickReturnConnection(barState, listState) }
 
-    // A new search (button, IME, sheet, preset, first-page retry) starts at page 0 with nothing
-    // shown: jump to the top and bring the bar back. drop(1) skips the value seen on (re)entry.
+    // Every new search (IME, sheet, preset, preset dialog, first-page retry): the field shows the
+    // searched text, the list jumps to the top (item 0 at 0 px) and the bar is shown flush above it.
+    // drop(1) skips the id seen on (re)entry, so returning from the reader keeps the position.
     LaunchedEffect(listState) {
-        snapshotFlow { state.loading && state.page == 0 }
-            .distinctUntilChanged()
+        snapshotFlow { state.searchId }
             .drop(1)
-            .filter { it }
             .collect {
+                text = state.query.anyField
                 barState.heightOffset = 0f
                 listState.scrollToItem(0)
             }
     }
 
+    // Once the bar is at least half hidden, drop focus (and the IME): never type into an unseen field.
+    LaunchedEffect(barState) {
+        snapshotFlow { barState.heightOffset < barState.heightOffsetLimit / 2 }
+            .distinctUntilChanged()
+            .filter { it }
+            .collect { focus.clearFocus() }
+    }
+
     fun search() {
         focus.clearFocus()
+        commitText()
         vm.runSearch()
     }
 
@@ -160,6 +175,9 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
                 Modifier
                     .onSizeChanged { barState.heightOffsetLimit = -it.height.toFloat() }
                     .graphicsLayer { translationY = barState.heightOffset }
+                    // Swallow taps on the bar's blank area and status strip so they never reach the
+                    // card underneath; the field and button handle their own taps first.
+                    .pointerInput(Unit) { detectTapGestures { } }
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.background)
                     .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
@@ -168,9 +186,9 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
                 SearchBar(
                     text = text,
                     filterCount = activeFilterCount(state.query),
-                    onText = { text = it; vm.setQuery(state.query.copy(anyField = it)) },
+                    onText = { text = it },
                     onSearch = ::search,
-                    onFilters = { focus.clearFocus(); showFilters = true },
+                    onFilters = { focus.clearFocus(); commitText(); showFilters = true },
                 )
             }
         },
@@ -196,9 +214,9 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
                     presets = state.presets,
                     activeId = state.activePresetId,
                     onApply = { focus.clearFocus(); vm.applyPreset(it) },
-                    onNew = { nameDialog = NameDialog.New() },
+                    onNew = { commitText(); nameDialog = NameDialog.New() },
                     onRename = { nameDialog = NameDialog.Rename(it) },
-                    onUpdate = vm::updatePresetFromCurrent,
+                    onUpdate = { commitText(); vm.updatePresetFromCurrent(it) },
                     onDelete = vm::deletePreset,
                     onReorder = vm::reorderPresets,
                 )
@@ -270,7 +288,8 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
 /**
  * Quick-return behaviour for the search bar, which overlays the list: the bar moves by exactly what
  * the list scrolled (so it follows the finger and re-enters on any upward scroll), pulling past the
- * top always reveals it, and when a gesture or fling ends half-way it settles to shown or hidden.
+ * top always reveals it, and when a gesture or fling ends half-way it settles to shown or hidden
+ * (except near the top of the list, where it is left flush on the first item).
  * Unlike enterAlwaysScrollBehavior it consumes nothing, so the list keeps scrolling underneath and
  * its padding never changes.
  */
@@ -289,10 +308,11 @@ private class QuickReturnConnection(
         val limit = bar.heightOffsetLimit
         val offset = bar.heightOffset
         if (offset < 0f && offset > limit) {
-            // Never settle hidden while the top of the list is still under the bar's slot.
+            // Near the top the bar already sits flush on item 0 (tracking moved it by exactly the
+            // scroll); settling either way would cover the item or leave a gap, so leave it be.
             val nearTop = list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset < -limit
-            val target = if (!nearTop && offset < limit / 2) limit else 0f
-            animate(offset, target) { v, _ -> bar.heightOffset = v }
+            if (nearTop) return Velocity.Zero
+            animate(offset, if (offset < limit / 2) limit else 0f) { v, _ -> bar.heightOffset = v }
         }
         return Velocity.Zero
     }

@@ -59,6 +59,8 @@ data class SearchUiState(
     val summaries: Map<Long, List<Block>> = emptyMap(),
     /** True once any search has been started; distinguishes "no results" from "not searched yet". */
     val searched: Boolean = false,
+    /** Bumped by every [SearchViewModel.runSearch], so the screen can react to each new search. */
+    val searchId: Int = 0,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -116,7 +118,7 @@ class SearchViewModel(
         shownQuery = q
         failedPage = null
         _state.update { it.copy(works = emptyList(), summaries = emptyMap(), page = 0, hasNext = false,
-            loading = true, error = null, searched = true) }
+            loading = true, error = null, searched = true, searchId = it.searchId + 1) }
         loadJob = viewModelScope.launch { load(gen, q, 1) }
     }
 
