@@ -1,10 +1,14 @@
 package app.ao3reader.ao3.parse
 
+import app.ao3reader.ao3.model.AuthorLink
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 object Ao3Urls {
-    private const val BASE = "https://archiveofourown.org"
+    const val HOST = "archiveofourown.org"
+    private const val BASE = "https://$HOST"
+    private const val ORPHAN = "orphan_account"
     /** Base URI for parsing AO3 HTML, so relative links resolve (`Element.absUrl`). */
     const val BASE_URI = "$BASE/"
 
@@ -43,4 +47,48 @@ object Ao3Urls {
     /** kind: fandom | character | relationship | freeform */
     fun autocomplete(kind: String, term: String): HttpUrl =
         "$BASE/autocomplete/$kind".toHttpUrl().newBuilder().addQueryParameter("term", term).build()
+
+    /** AO3's placeholder owner of orphaned works: never a real author to list. */
+    fun isOrphan(user: String): Boolean = user.equals(ORPHAN, ignoreCase = true)
+
+    fun series(id: Long): HttpUrl = "$BASE/series/$id".toHttpUrl()
+
+    /** The author's works: the user's whole list when the pseud is the default one, else that pseud's. */
+    fun authorWorks(a: AuthorLink): HttpUrl {
+        val b = "$BASE/".toHttpUrl().newBuilder().addPathSegment("users").addPathSegment(a.user)
+        if (!a.pseud.equals(a.user, ignoreCase = true)) b.addPathSegment("pseuds").addPathSegment(a.pseud)
+        return b.addPathSegment("works").build()
+    }
+
+    /** [url] at [page]: any page parameter is replaced; page 1 carries none. */
+    fun page(url: HttpUrl, page: Int): HttpUrl = paged(url.newBuilder().removeAllQueryParameters("page"), page)
+
+    /**
+     * The in-app work list for [url], normalized: `/series/{id}`, or an author's works
+     * (`/users/{u}[/works]`, `/users/{u}/pseuds/{p}[/works]`). Null for anything else: other hosts,
+     * schemes, ports, credentials, other paths, orphan_account.
+     */
+    fun workList(url: HttpUrl): HttpUrl? {
+        if (url.scheme != "https" || url.host != HOST || url.port != 443) return null
+        if (url.username.isNotEmpty() || url.password.isNotEmpty()) return null
+        val seg = url.pathSegments
+        return when {
+            seg.size == 2 && seg[0] == "series" -> seg[1].takeIf { s -> s.isNotEmpty() && s.all { it in '0'..'9' } }
+                ?.toLongOrNull()?.let(::series)
+            seg.isNotEmpty() && seg[0] == "users" -> {
+                val user = seg.getOrNull(1)?.takeIf { it.isNotBlank() && !isOrphan(it) } ?: return null
+                val rest = seg.drop(2)
+                when {
+                    rest.isEmpty() || rest == listOf("works") -> authorWorks(AuthorLink(user, user, user))
+                    (rest.size == 2 || (rest.size == 3 && rest[2] == "works")) && rest[0] == "pseuds" && rest[1].isNotBlank() ->
+                        authorWorks(AuthorLink(rest[1], user, rest[1]))
+                    else -> null
+                }
+            }
+            else -> null
+        }
+    }
+
+    /** [workList] of a string (e.g. a decoded navigation argument); null when it is not a URL at all. */
+    fun workListOrNull(url: String?): HttpUrl? = url?.toHttpUrlOrNull()?.let(::workList)
 }
