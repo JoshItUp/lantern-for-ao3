@@ -101,6 +101,18 @@ object BlockConverter {
 
     private fun linkMaker(href: String): (Int, Int) -> Span = { s, en -> Span.Link(s, en, href) }
 
+    /**
+     * The absolute http(s) target of link [a], resolved against the document's base URI (callers parse
+     * with [Ao3Urls.BASE_URI]); null for fragment-only links (footnote jumps that can't scroll here),
+     * other schemes and unresolvable hrefs. The link text is kept either way.
+     */
+    private fun linkTarget(a: Element): String? {
+        val raw = a.attr("href").trim()
+        if (raw.isEmpty() || raw.startsWith("#")) return null
+        val abs = a.absUrl("href")
+        return abs.takeIf { it.startsWith("https://", ignoreCase = true) || it.startsWith("http://", ignoreCase = true) }
+    }
+
     private fun shift(s: Span, by: Int): Span = when (s) {
         is Span.Bold -> s.copy(start = s.start + by, end = s.end + by)
         is Span.Italic -> s.copy(start = s.start + by, end = s.end + by)
@@ -145,7 +157,7 @@ object BlockConverter {
             "i", "em" -> ({ s: Int, en: Int -> Span.Italic(s, en) })
             "u", "ins" -> ({ s: Int, en: Int -> Span.Underline(s, en) })
             "s", "strike", "del" -> ({ s: Int, en: Int -> Span.Strike(s, en) })
-            "a" -> if (e.hasAttr("href")) linkMaker(e.attr("href")) else null
+            "a" -> linkTarget(e)?.let { linkMaker(it) }
             else -> null
         }
 

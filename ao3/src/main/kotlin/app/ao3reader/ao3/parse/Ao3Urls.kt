@@ -5,6 +5,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 
 object Ao3Urls {
     private const val BASE = "https://archiveofourown.org"
+    /** Base URI for parsing AO3 HTML, so relative links resolve (`Element.absUrl`). */
+    const val BASE_URI = "$BASE/"
 
     /** chapterId null -> /works/{id}. Always carries view_adult=true. */
     fun chapter(workId: Long, chapterId: Long?): HttpUrl {

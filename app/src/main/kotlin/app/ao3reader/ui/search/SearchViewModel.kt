@@ -11,6 +11,7 @@ import app.ao3reader.ao3.model.Block
 import app.ao3reader.ao3.model.SearchQuery
 import app.ao3reader.ao3.model.WorkBlurb
 import app.ao3reader.ao3.net.FetchResult
+import app.ao3reader.ao3.parse.Ao3Urls
 import app.ao3reader.ao3.parse.BlockConverter
 import app.ao3reader.data.Loaded
 import app.ao3reader.data.SearchSource
@@ -269,7 +270,7 @@ class SearchViewModel(
         internal fun convertSummary(html: String?): List<Block> {
             if (html.isNullOrBlank()) return emptyList()
             return try {
-                BlockConverter.convert(Jsoup.parseBodyFragment(html).body())
+                BlockConverter.convert(Jsoup.parseBodyFragment(html, Ao3Urls.BASE_URI).body())
             } catch (_: Exception) {
                 emptyList()
             }
