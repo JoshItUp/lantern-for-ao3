@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -27,6 +28,7 @@ class NotSignedInException : IllegalStateException("not signed in")
 
 private val libraryJson = Json { ignoreUnknownKeys = true }
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class LibraryRepository(
     private val session: Session,
     private val db: AppDatabase,
@@ -34,18 +36,23 @@ class LibraryRepository(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val parseDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
-    /** Page 1 of [section] as last loaded; null if never loaded, unreadable, or [page] > 1 (not persisted). */
+    /** Page 1 of [section] as last loaded by the current account; null if never loaded, unreadable, or [page] > 1 (not persisted). */
     fun cached(section: LibrarySection, page: Int): Flow<LibraryPage?> {
         if (page != 1 || section == LibrarySection.SUBSCRIPTIONS) return flowOf(null)
         val dao = db.libraryPageDao()
-        return dao.observe(section.name, page).distinctUntilChanged().map { row ->
-            if (row == null) return@map null
+        // Follows the signed-in account: another account never sees these rows.
+        return session.state.map { cacheKey() }.distinctUntilChanged().flatMapLatest { user ->
+            if (user == null) flowOf(null)
+            else dao.observe(user, section.name, page).distinctUntilChanged().map { row -> if (row == null) null else user to row }
+        }.map { hit ->
+            if (hit == null) return@map null
+            val (user, row) = hit
             try {
                 libraryJson.decodeFromString<LibraryPage>(row.json)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                dao.delete(section.name, page)
+                dao.delete(user, section.name, page)
                 null
             }
         }
@@ -57,6 +64,7 @@ class LibraryRepository(
             return Loaded.Error(FetchResult.Failed(IllegalArgumentException("use subscriptions()")))
         }
         val user = username() ?: return notSignedIn()
+        val key = user.lowercase()
         val url = when (section) {
             LibrarySection.HISTORY -> Ao3Urls.readings(user, page, false)
             LibrarySection.MARKED_FOR_LATER -> Ao3Urls.readings(user, page, true)
@@ -71,7 +79,7 @@ class LibraryRepository(
         withContext(ioDispatcher) {
             if (page == 1) {
                 db.libraryPageDao().upsert(
-                    LibraryPageEntity(section.name, page, libraryJson.encodeToString(parsed), clock())
+                    LibraryPageEntity(key, section.name, page, libraryJson.encodeToString(parsed), clock())
                 )
             }
             if (section == LibrarySection.HISTORY && parsed.works.isNotEmpty()) {
@@ -94,6 +102,8 @@ class LibraryRepository(
     suspend fun clear() = withContext(ioDispatcher) { db.libraryPageDao().clear() }
 
     private fun username(): String? = session.state.value.takeIf { it.signedIn }?.username?.takeIf { it.isNotBlank() }
+
+    private fun cacheKey(): String? = username()?.lowercase()
 
     private fun notSignedIn() = Loaded.Error(FetchResult.Failed(NotSignedInException()))
 }

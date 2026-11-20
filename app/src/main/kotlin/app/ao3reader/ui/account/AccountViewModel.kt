@@ -32,14 +32,18 @@ interface AccountSource {
     suspend fun signOut()
 }
 
-fun Session.asAccountSource(): AccountSource {
+/** [onSignedOut] runs after an explicit sign-out (not when a session merely lapses). */
+fun Session.asAccountSource(onSignedOut: suspend () -> Unit = {}): AccountSource {
     val session = this
     return object : AccountSource {
         override val state get() = session.state
         override val needsSignIn get() = session.needsSignIn
         override val credentialsSaved get() = session.credentialsSaved
         override suspend fun signIn(username: String, password: String) = session.signIn(username, password)
-        override suspend fun signOut() = session.signOut()
+        override suspend fun signOut() {
+            session.signOut()
+            onSignedOut()
+        }
     }
 }
 
@@ -161,7 +165,7 @@ class AccountViewModel(private val source: AccountSource) : ViewModel() {
 
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { AccountViewModel(container.session.asAccountSource()) }
+            initializer { AccountViewModel(container.session.asAccountSource { container.libraryRepo.clear() }) }
         }
     }
 }
