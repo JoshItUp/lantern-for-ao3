@@ -2,16 +2,14 @@ package app.ao3reader.ui
 
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -76,8 +74,14 @@ object Routes {
 
 /** Short screen transitions (the NavHost default is a ~700 ms crossfade). */
 private const val ENTER_MS = 220
+private const val EXIT_MS = 200
 private const val UNDER_MS = 150
 private const val SCALE_FROM = 0.96f
+/** Back: the screen underneath starts almost opaque and finishes quickly, so it reads as "already there". */
+private const val POP_UNDER_MS = 100
+private const val UNDER_ALPHA_FROM = 0.9f
+/** Back: the leaving screen only fades lightly while it slides away. */
+private const val EXIT_ALPHA_TO = 0.6f
 /** Switching tabs: a plain quick crossfade. */
 private const val TAB_MS = 150
 /** The bottom bar slides out/in this fast when a pushed screen covers the tabs. */
@@ -97,9 +101,6 @@ fun AppNav(container: AppContainer) {
     val showBar by remember { derivedStateOf { entry?.destination?.route.let { it == null || it in Routes.TABS } } }
     val libraryTab by remember { derivedStateOf { entry?.destination?.route == Routes.LIBRARY } }
     val searchReselect = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
-
-    // Plain (non-predictive) back from the Library root: instant switch to Search.
-    BackHandler(enabled = libraryTab) { nav.switchTab(Routes.SEARCH) }
 
     fun openAccount() = nav.navigate(Routes.ACCOUNT) { launchSingleTop = true }
 
@@ -121,9 +122,24 @@ fun AppNav(container: AppContainer) {
             exitTransition = {
                 if (isTabSwitch()) fadeOut(tween(TAB_MS)) else fadeOut(tween(UNDER_MS, easing = FastOutSlowInEasing))
             },
-            // Back is always instant: no pop transitions anywhere.
-            popEnterTransition = { EnterTransition.None },
-            popExitTransition = { ExitTransition.None },
+            // Back: the leaving screen slides out to the right, the one beneath is simply revealed.
+            // No scale. The reader handles back itself (non-predictive), so this plays on release
+            // rather than being seeked with the finger.
+            popEnterTransition = {
+                if (isTabSwitch()) {
+                    fadeIn(tween(TAB_MS))
+                } else {
+                    fadeIn(tween(POP_UNDER_MS, easing = FastOutSlowInEasing), initialAlpha = UNDER_ALPHA_FROM)
+                }
+            },
+            popExitTransition = {
+                if (isTabSwitch()) {
+                    fadeOut(tween(TAB_MS))
+                } else {
+                    slideOutHorizontally(tween(EXIT_MS, easing = FastOutSlowInEasing)) { it } +
+                        fadeOut(tween(EXIT_MS, easing = FastOutSlowInEasing), targetAlpha = EXIT_ALPHA_TO)
+                }
+            },
         ) {
             composable(Routes.SEARCH) {
                 val vm: SearchViewModel = viewModel(factory = SearchViewModel.factory(container))
