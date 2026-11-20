@@ -12,6 +12,8 @@ import app.ao3reader.ao3.net.Ao3Fetcher
 import app.ao3reader.ao3.net.Fetcher
 import androidx.room.Room
 import app.ao3reader.data.ChapterCache
+import app.ao3reader.data.LibraryRepository
+import kotlinx.coroutines.launch
 import app.ao3reader.data.SearchRepository
 import app.ao3reader.data.SettingsStore
 import app.ao3reader.data.WorkRepository
@@ -87,4 +89,17 @@ class AppContainer(val context: Context) {
     val searchRepo: SearchRepository by lazy { SearchRepository(fetcher) }
 
     val workRepo: WorkRepository by lazy { WorkRepository(fetcher, chapterCache, appScope) }
+
+    val libraryRepo: LibraryRepository by lazy {
+        LibraryRepository(session, db).also { repo ->
+            // Cached library pages belong to the account: drop them when it goes from signed in to signed out.
+            appScope.launch {
+                var was = session.state.value.signedIn
+                session.state.collect { st ->
+                    if (was && !st.signedIn) repo.clear()
+                    was = st.signedIn
+                }
+            }
+        }
+    }
 }

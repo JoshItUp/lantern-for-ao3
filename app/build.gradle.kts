@@ -43,6 +43,9 @@ android {
         compose = true
     }
 
+    // MigrationTestHelper (Robolectric) reads the exported schema JSON from the merged assets; debug only, so release APKs do not carry them.
+    sourceSets.getByName("debug").assets.directories.add("$projectDir/schemas")
+
     testOptions {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
@@ -85,6 +88,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.jsoup)
 
+    testImplementation(libs.androidx.room.testing)
     testImplementation(libs.robolectric)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
