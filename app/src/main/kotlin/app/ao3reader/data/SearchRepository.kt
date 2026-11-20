@@ -54,7 +54,9 @@ class SearchRepository(
         val key = kind to t.lowercase()
         synchronized(suggestionCache) { suggestionCache[key] }?.let { return it }
         val r = fetcher.get(Ao3Urls.autocomplete(kind, t), accept = AUTOCOMPLETE_ACCEPT) as? FetchResult.Ok ?: return emptyList()
-        val names = withContext(parseDispatcher) { Autocomplete.parse(r.html) }
+        // Only a real JSON array is cached: an HTML page served as 200 (Cloudflare interstitial,
+        // maintenance) would otherwise cache as "no matches" and silence every longer term.
+        val names = withContext(parseDispatcher) { Autocomplete.parseOrNull(r.html) } ?: return emptyList()
         synchronized(suggestionCache) { suggestionCache[key] = names }
         return names
     }
