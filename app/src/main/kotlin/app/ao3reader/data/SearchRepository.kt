@@ -16,7 +16,13 @@ import kotlinx.coroutines.withContext
 interface SearchSource {
     suspend fun search(q: SearchQuery, page: Int): Loaded<WorkPage>
     suspend fun autocomplete(kind: String, term: String): List<String>
+
+    /** Suggestions available without a request (see [SearchRepository.cachedAutocomplete]); null when none. */
+    fun cachedAutocomplete(kind: String, term: String): LocalSuggestions? = null
 }
+
+/** Suggestions from the cache. [final] means a request could not add anything, so none is needed. */
+data class LocalSuggestions(val names: List<String>, val final: Boolean)
 
 class SearchRepository(
     private val fetcher: Fetcher,
@@ -25,6 +31,15 @@ class SearchRepository(
     companion object {
         /** What AO3's own JS sends; the autocomplete controller only responds to JSON. */
         const val AUTOCOMPLETE_ACCEPT = "application/json, text/javascript, */*; q=0.01"
+        /** AO3 returns at most this many suggestions; a shorter list is everything that matches. */
+        const val AUTOCOMPLETE_PAGE_LIMIT = 10
+        const val AUTOCOMPLETE_CACHE_SIZE = 100
+    }
+
+    /** LRU of successful autocomplete results, keyed by (kind, trimmed lowercase term). */
+    private val suggestionCache = object : LinkedHashMap<Pair<String, String>, List<String>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<String, String>, List<String>>?) =
+            size > AUTOCOMPLETE_CACHE_SIZE
     }
 
     override suspend fun search(q: SearchQuery, page: Int): Loaded<WorkPage> =
@@ -36,7 +51,31 @@ class SearchRepository(
     override suspend fun autocomplete(kind: String, term: String): List<String> {
         val t = term.trim()
         if (t.length < 2) return emptyList()
+        val key = kind to t.lowercase()
+        synchronized(suggestionCache) { suggestionCache[key] }?.let { return it }
         val r = fetcher.get(Ao3Urls.autocomplete(kind, t), accept = AUTOCOMPLETE_ACCEPT) as? FetchResult.Ok ?: return emptyList()
-        return withContext(parseDispatcher) { Autocomplete.parse(r.html) }
+        val names = withContext(parseDispatcher) { Autocomplete.parse(r.html) }
+        synchronized(suggestionCache) { suggestionCache[key] = names }
+        return names
+    }
+
+    /**
+     * An exact cache hit (final), or else the cached result of the longest cached prefix of [term],
+     * narrowed to names containing every word of [term]. That is final when the prefix result was
+     * complete (under [AUTOCOMPLETE_PAGE_LIMIT] names): longer terms can only match a subset of it.
+     */
+    override fun cachedAutocomplete(kind: String, term: String): LocalSuggestions? {
+        val t = term.trim().lowercase()
+        if (t.length < 2) return null
+        synchronized(suggestionCache) {
+            suggestionCache[kind to t]?.let { return LocalSuggestions(it, final = true) }
+            for (len in t.length - 1 downTo 2) {
+                val prefix = suggestionCache[kind to t.substring(0, len)] ?: continue
+                val words = t.split(' ').filter { it.isNotBlank() }
+                val narrowed = prefix.filter { name -> words.all { name.contains(it, ignoreCase = true) } }
+                return LocalSuggestions(narrowed, final = prefix.size < AUTOCOMPLETE_PAGE_LIMIT)
+            }
+        }
+        return null
     }
 }

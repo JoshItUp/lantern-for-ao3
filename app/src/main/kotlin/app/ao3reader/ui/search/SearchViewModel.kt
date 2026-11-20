@@ -146,7 +146,20 @@ class SearchViewModel(
         loadJob = viewModelScope.launch { load(gen, q, page) }
     }
 
+    /** Never leaves [SearchUiState.loading] stuck: anything unexpected becomes [FetchResult.Failed]. */
     private suspend fun load(gen: Int, q: SearchQuery, page: Int) {
+        try {
+            loadPage(gen, q, page)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (gen != generation) return
+            failedPage = page
+            _state.update { it.copy(loading = false, error = FetchResult.Failed(e)) }
+        }
+    }
+
+    private suspend fun loadPage(gen: Int, q: SearchQuery, page: Int) {
         val result = source.search(q, page)
         if (gen != generation) return
         when (result) {
@@ -210,13 +223,21 @@ class SearchViewModel(
     }
 
     /**
-     * Suggestions for a tag field. Waits 300 ms first, so a collector restarted on every keystroke
-     * (e.g. a LaunchedEffect keyed on the text) only fires a request once typing pauses.
+     * Suggestions for a tag field. Cached results (or a cached prefix's results, narrowed locally)
+     * are emitted at once; when those can't be final, a request follows after
+     * [AUTOCOMPLETE_DEBOUNCE_MS]. The collector restarts on every keystroke (a LaunchedEffect keyed
+     * on the text), which cancels a superseded flow, including a request still queued behind
+     * the fetcher's lock, so stale terms never hold up the queue.
      */
     fun autocomplete(kind: String, term: String): Flow<List<String>> = flow {
         if (term.trim().length < 2) {
             emit(emptyList())
             return@flow
+        }
+        val local = source.cachedAutocomplete(kind, term)
+        if (local != null) {
+            emit(local.names)
+            if (local.final) return@flow
         }
         delay(AUTOCOMPLETE_DEBOUNCE_MS)
         val result = try {
@@ -230,7 +251,7 @@ class SearchViewModel(
     }
 
     companion object {
-        const val AUTOCOMPLETE_DEBOUNCE_MS = 300L
+        const val AUTOCOMPLETE_DEBOUNCE_MS = 150L
 
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {

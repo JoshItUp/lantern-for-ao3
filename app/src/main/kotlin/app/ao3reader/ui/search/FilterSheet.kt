@@ -245,7 +245,8 @@ private fun TagInput(
 ) {
     var text by rememberSaveable(kind) { mutableStateOf("") }
     var suggestions by remember(kind) { mutableStateOf(emptyList<String>()) }
-    // Restarting on every keystroke cancels the previous wait, so this debounces (the flow waits 300 ms).
+    // Restarting on every keystroke cancels the previous flow (its debounce wait or a request still
+    // queued for the fetcher), so only the latest term is ever requested.
     LaunchedEffect(kind, text) {
         if (text.trim().length < MIN_SUGGEST_CHARS) suggestions = emptyList()
         autocomplete(kind, text).collect { suggestions = it }
