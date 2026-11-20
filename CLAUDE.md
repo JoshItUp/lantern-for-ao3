@@ -7,7 +7,7 @@ At the start of every session, read `docs/PROGRESS.md`. It names the active plan
 
 ## Rules
 - No attribution in commits, PRs, or files: no `Co-Authored-By`, no "Generated with Claude" lines.
-- Run Gradle with JDK 21: `JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"`. The system JDK 25 is unsupported.
+- Run Gradle with Android Studio's bundled JBR: `JAVA_HOME="/c/Program Files/Android/Android Studio1/jbr"` (JDK 25, Studio 2026.2 install; the old `Android Studio/jbr` is broken).
 - Every AO3 request goes through `Ao3Fetcher`. Never add a second network path.
 
 ## Docs
