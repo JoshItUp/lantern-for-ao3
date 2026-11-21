@@ -3,6 +3,7 @@ package app.ao3reader.data
 import app.ao3reader.account.Session
 import app.ao3reader.account.SessionRenewedException
 import app.ao3reader.ao3.net.FetchResult
+import app.ao3reader.ao3.net.HttpStatusException
 import app.ao3reader.ao3.parse.AccountParser
 import app.ao3reader.ao3.parse.Ao3Form
 import app.ao3reader.ao3.parse.Ao3Urls
@@ -11,60 +12,87 @@ import app.ao3reader.ao3.parse.ListActions
 import app.ao3reader.ao3.parse.WorkActions
 import app.ao3reader.ao3.parse.WorkActionsParser
 import app.ao3reader.ao3.parse.last
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
-import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
-/** An action AO3 didn't take: the form is missing, or AO3 kept answering with an error ([message] is AO3's text). */
+/** An action AO3 didn't take: the form is missing, or AO3 refused it twice ([message] may be AO3's text). */
 class ActionFailedException(message: String) : Exception(message)
+
+/**
+ * AO3 answered the POST with a 2xx, but neither the answer nor a fresh GET of the page shows the action took
+ * effect. It may or may not have: the UI says so ("may not have posted, check the work").
+ */
+class ActionUnconfirmedException(message: String) : Exception(message)
+
+/**
+ * The POST was sent but failed on the way back ([result]: a network error, timeout or 5xx): AO3 may have
+ * taken the action. Not retried; the item's forms are marked stale so the next action reads AO3's state first.
+ */
+class ActionMayHaveTakenEffectException(val result: FetchResult) : Exception("the request may have reached AO3")
 
 /**
  * The owner's actions on works (kudos, bookmark, mark for later, subscribe, comment) and on series and
  * authors (subscribe), posted through [Session.authedPost] with the forms of the last signed-in page seen.
  *
  * Retry rule, per call: submit once. On a 422, a flash error, `Blocked` or a renewed session, re-GET the
- * page the form came from, check whether the action already took effect (then it is a success and nothing
- * is posted again), else submit the fresh form once more. Then give up. Never loops.
+ * page the form came from, check whether the action already took effect (then nothing is posted again),
+ * else submit the fresh form once more. Then give up. Never loops.
  *
- * Toggles are per key: a tap while one is in flight is ignored (it reports the pending value), [state] /
- * [listState] show the pending value at once and roll back when the call fails.
+ * Success is confirmed, never assumed from a 2xx: the answer must be the item's own page showing the action
+ * (or a recognised success notice), else a fresh GET must show it; otherwise [ActionUnconfirmedException].
+ * Any failure after a POST was sent marks the item stale. POSTs and their bookkeeping are not cancellable.
  *
- * Form fields and comment text are never logged.
+ * State is per account: it is cleared whenever [Session.actingAccount] changes. Form fields and comment text
+ * are never logged.
  */
-class ActionRepository(private val session: Session) {
+class ActionRepository(private val session: Session, scope: CoroutineScope? = null) {
     private val works = Book<Long, WorkActions>()
     private val lists = Book<String, ListActions>()
     private val locks = ConcurrentHashMap<String, Mutex>()
+    /** Works whose kudos were confirmed for the current account: a re-GET with a truncated kudos list doesn't revert it. */
+    private val kudosed = ConcurrentHashMap.newKeySet<Long>()
+    @Volatile private var account: String? = session.actingAccount.value?.lowercase()
 
     /** Per work id: the latest known actions, pending toggles applied. */
     val state: StateFlow<Map<Long, WorkActions>> = works.flow
-    /** Per subscribe page URL ([Ao3Urls.subscribePage] of a list URL): the latest known, pending toggles applied. */
+    /** Per list key ([listKey]): the latest known, pending toggles applied. */
     val listState: StateFlow<Map<String, ListActions>> = lists.flow
+
+    init {
+        scope?.launch { session.actingAccount.collect { syncAccount() } }
+    }
 
     /** From any signed-in page of [workId]; [pageUrl] is where its forms are fetched again. Other pages are ignored. */
     fun update(workId: Long, html: String, pageUrl: HttpUrl) {
+        syncAccount()
         if (!isOwnPage(html)) return
         val a = WorkActionsParser.parse(html, pageUrl)
         if (WorkActionsParser.workId(a)?.let { it != workId } == true) return
-        works.put(workId, a, pageUrl)
+        putWork(workId, a, pageUrl)
     }
 
     /** From a signed-in series or user page of the list at [listUrl]; pages without the subscribe form are ignored. */
     fun updateList(listUrl: HttpUrl, html: String, pageUrl: HttpUrl) {
-        val key = Ao3Urls.subscribePage(listUrl) ?: return
+        syncAccount()
+        val key = listKey(listUrl) ?: return
         if (!isOwnPage(html)) return
         val l = WorkActionsParser.parseList(html, pageUrl)
         if (l.subscribe == null) return
-        lists.put(key.toString(), l, pageUrl)
+        lists.put(key, l, pageUrl)
     }
 
     /** The owner's bookmark on [workId] as the known edit form holds it; null when not bookmarked or no edit form is known. */
     fun existingBookmark(workId: Long): BookmarkInput? {
+        syncAccount()
         val a = works.get(workId)?.value ?: return null
         val f = a.bookmarkForm?.takeIf { a.bookmarked && isEditForm(it) } ?: return null
         return WorkActionsParser.bookmarkInput(f)
@@ -74,79 +102,91 @@ class ActionRepository(private val session: Session) {
     fun clear() {
         works.clear()
         lists.clear()
+        kudosed.clear()
     }
 
     /** GETs the work page (the last one seen, else the work) and updates [state]. */
     suspend fun refresh(workId: Long): Loaded<WorkActions> {
+        syncAccount()
         if (session.actingAccount.value == null) return notSignedIn()
         return fetchWork(workId, works.get(workId)?.pageUrl ?: Ao3Urls.chapter(workId, null))
     }
 
     /** GETs the subscribe page of the list at [listUrl] and updates [listState]. */
     suspend fun refreshList(listUrl: HttpUrl): Loaded<ListActions> {
-        val key = Ao3Urls.subscribePage(listUrl) ?: return notAList()
+        syncAccount()
+        val key = listKey(listUrl) ?: return notAList()
         if (session.actingAccount.value == null) return notSignedIn()
-        return fetchList(key)
+        return fetchList(key, Ao3Urls.subscribePage(listUrl)!!)
     }
 
     suspend fun kudos(workId: Long): Loaded<Unit> {
+        syncAccount()
         if (session.actingAccount.value == null) return notSignedIn()
         return lock("kudos:$workId").withLock {
             val known = currentWork(workId).let { it.ok() ?: return@withLock it as Loaded.Error }
             if (known.value.kudosGiven) return@withLock Loaded.Ok(Unit)
-            val r = perform(
-                initial = known.value,
-                fetch = { fetchWork(workId, known.pageUrl) },
+            val r = perform(known.value, workSpec(
+                workId, known.pageUrl,
                 form = { it.kudos },
                 done = { it.kudosGiven },
-                alreadyOk = WorkActionsParser::kudosAlreadyLeft,
-            )
-            when (r) {
-                is Loaded.Ok -> {
-                    afterWork(workId, r.value) { it.copy(kudosGiven = true) }
-                    Loaded.Ok(Unit)
-                }
-                is Loaded.Error -> r
+                confirm = { it.kudosGiven },
+                notice = { html -> WorkActionsParser.kudosAlreadyLeft(html) || WorkActionsParser.successNotice(html, KUDOS_THANKS) },
+                trust = { it.copy(kudosGiven = true) },
+            ))
+            if (r is Loaded.Ok) {
+                kudosed += workId
+                works.modify(workId) { it.copy(kudosGiven = true) }
             }
+            r
         }
     }
 
+    /**
+     * Mark for later or mark as read. A call while one for the same work is in flight sends nothing and
+     * returns `Ok(pending value)`: that is NOT a confirmed result, only what the first call is trying to do.
+     */
     suspend fun toggleMarkForLater(workId: Long): Loaded<Boolean> =
         toggleWork(workId, "mfl", { it.markedForLater }, { a, v -> a.copy(markedForLater = v) }) { it.markForLater }
 
+    /** Subscribe or unsubscribe; a call during one in flight returns `Ok(pending value)`, NOT a confirmed result. */
     suspend fun toggleSubscribe(workId: Long): Loaded<Boolean> =
         toggleWork(workId, "sub", { it.subscribed }, { a, v -> a.copy(subscribed = v) }) { it.subscribe }
 
-    /** Subscribe to or unsubscribe from a series or an author; [listUrl] is any in-app work list URL ([Ao3Urls.workList]). */
+    /**
+     * Subscribe to or unsubscribe from a series or an author; [listUrl] is any in-app work list URL
+     * ([Ao3Urls.workList]). A call during one in flight returns `Ok(pending value)`, NOT a confirmed result.
+     */
     suspend fun toggleListSubscribe(listUrl: HttpUrl): Loaded<Boolean> {
-        val page = Ao3Urls.subscribePage(listUrl) ?: return notAList()
+        syncAccount()
+        val key = listKey(listUrl) ?: return notAList()
+        val page = Ao3Urls.subscribePage(listUrl)!!
         if (session.actingAccount.value == null) return notSignedIn()
-        val key = page.toString()
         val m = lock("list:$key")
         if (!m.tryLock()) return Loaded.Ok(lists.flow.value[key]?.subscribed ?: false)
         try {
-            val known = lists.get(key)?.takeIf { !it.stale }?.let { Loaded.Ok(it.value) } ?: fetchList(page)
+            val known = lists.get(key)?.takeIf { !it.stale }?.let { Loaded.Ok(it.value) } ?: fetchList(key, page)
             val start = known.ok() ?: return known as Loaded.Error
             val target = !start.subscribed
+            val pageUrl = lists.get(key)?.pageUrl ?: page
             lists.overlay(key, "sub") { it.copy(subscribed = target) }
             try {
-                val r = perform(
-                    initial = start,
-                    fetch = { fetchList(lists.get(key)?.pageUrl ?: page) },
+                val r = perform(start, Spec(
+                    fetch = { fetchList(key, pageUrl) },
                     form = { it.subscribe },
                     done = { it.subscribed == target },
-                )
+                    confirm = { it.subscribed == target },
+                    ownPage = { resp ->
+                        if (!isOwnPage(resp.html)) null
+                        else WorkActionsParser.parseList(resp.html, resp.finalUrl)
+                            .takeIf { it.subscribe != null && sameSubscribable(it.subscribe!!, start.subscribe) }
+                            ?.also { lists.put(key, it, pageUrl) }
+                    },
+                    trust = { lists.markStale(key) { it.copy(subscribed = target) } },
+                    stale = { lists.markStale(key) { it } },
+                ))
                 return when (r) {
-                    is Loaded.Ok -> {
-                        val resp = r.value
-                        val parsed = resp?.let { WorkActionsParser.parseList(it.html, it.finalUrl) }
-                        if (resp != null && parsed?.subscribe != null && sameSubscribable(parsed.subscribe!!, start.subscribe)) {
-                            lists.put(key, parsed, lists.get(key)?.pageUrl ?: page)
-                        } else if (resp != null) {
-                            lists.markStale(key) { it.copy(subscribed = target) }
-                        }
-                        Loaded.Ok(lists.get(key)?.value?.subscribed ?: target)
-                    }
+                    is Loaded.Ok -> Loaded.Ok(target)
                     is Loaded.Error -> r
                 }
             } finally {
@@ -157,52 +197,49 @@ class ActionRepository(private val session: Session) {
         }
     }
 
-    /** Creates the bookmark, or edits the existing one (fetching its edit page when only the link is known). */
+    /**
+     * Creates the bookmark, or edits the existing one (fetching its edit page when only the link is known).
+     * A bookmark found to exist already is edited with [input]: it is never reported saved without it.
+     */
     suspend fun saveBookmark(workId: Long, input: BookmarkInput): Loaded<Unit> {
+        syncAccount()
         if (session.actingAccount.value == null) return notSignedIn()
         return lock("bookmark:$workId").withLock {
             val known = currentWork(workId).let { it.ok() ?: return@withLock it as Loaded.Error }
-            val creating = !known.value.bookmarked
-            val r = perform(
-                initial = known.value,
-                fetch = { fetchWork(workId, known.pageUrl) },
+            perform(known.value, workSpec(
+                workId, known.pageUrl,
                 form = { a -> bookmarkFormFor(a) },
-                done = { creating && it.bookmarked },
+                // Never skip posting: an existing bookmark gets the owner's input through its (idempotent) edit form.
+                done = { false },
+                confirm = { a -> a.bookmarked && (a.bookmarkForm?.takeIf(::isEditForm)?.let { matches(WorkActionsParser.bookmarkInput(it), input) } ?: true) },
                 overrides = bookmarkOverrides(input),
-            )
-            when (r) {
-                is Loaded.Ok -> {
-                    afterWork(workId, r.value) { it.copy(bookmarked = true) }
-                    Loaded.Ok(Unit)
-                }
-                is Loaded.Error -> r
-            }
+                trust = { it.copy(bookmarked = true) },
+            ))
         }
     }
 
-    /** Posts [text] as-is to [chapterId]'s comment form (the known page's when null). Blank text sends nothing. */
+    /**
+     * Posts [text] as-is to [chapterId]'s comment form (the known page's when null). Blank text sends nothing.
+     * Confirmed by the answer being the work's page or AO3's "Comment created" notice; otherwise
+     * [ActionUnconfirmedException]. A failure after sending is [ActionMayHaveTakenEffectException].
+     */
     suspend fun comment(workId: Long, chapterId: Long?, text: String): Loaded<Unit> {
         if (text.isBlank()) return Loaded.Error(FetchResult.Failed(IllegalArgumentException("comment is blank")))
+        syncAccount()
         if (session.actingAccount.value == null) return notSignedIn()
         return lock("comment:$workId").withLock {
             val stored = works.get(workId)
             val usable = stored?.takeIf { !it.stale && it.value.comment?.let { f -> matchesChapter(f, chapterId) } == true }
             val pageUrl = usable?.pageUrl ?: if (chapterId != null) Ao3Urls.chapter(workId, chapterId) else stored?.pageUrl ?: Ao3Urls.chapter(workId, null)
             val start = usable?.value ?: (fetchWork(workId, pageUrl).let { it.ok() ?: return@withLock it as Loaded.Error })
-            val r = perform(
-                initial = start,
-                fetch = { fetchWork(workId, pageUrl) },
+            perform(start, workSpec(
+                workId, pageUrl,
                 form = { a -> a.comment?.takeIf { matchesChapter(it, chapterId) } },
                 done = { false },
+                confirm = null,
+                notice = { html -> WorkActionsParser.successNotice(html, COMMENT_CREATED) },
                 overrides = listOf(WorkActionsParser.COMMENT to text),
-            )
-            when (r) {
-                is Loaded.Ok -> {
-                    afterWork(workId, r.value) { it }
-                    Loaded.Ok(Unit)
-                }
-                is Loaded.Error -> r
-            }
+            ))
         }
     }
 
@@ -214,57 +251,117 @@ class ActionRepository(private val session: Session) {
         data class Fail(val error: Loaded.Error) : Sent
     }
 
-    /**
-     * The retry rule. Ok(response) when a POST succeeded, Ok(null) when a re-GET showed the action already in
-     * effect (state is updated from that page).
-     */
-    private suspend fun <S> perform(
-        initial: S,
-        fetch: suspend () -> Loaded<S>,
-        form: suspend (S) -> Ao3Form?,
-        done: (S) -> Boolean,
+    /** How one action reads, posts and confirms an item of state [S]. */
+    private class Spec<S>(
+        /** Re-GET the page the form came from (signed in); stores the state. */
+        val fetch: suspend () -> Loaded<S>,
+        val form: suspend (S) -> Ao3Form?,
+        /** Already in effect: nothing (more) to post. */
+        val done: (S) -> Boolean,
+        /** The page shows the action took effect; null: only the item's own page or [notice] confirms. */
+        val confirm: ((S) -> Boolean)?,
+        /** The answer as the item's own signed-in page (stored when it is), else null. */
+        val ownPage: (FetchResult.Ok) -> S?,
+        /** A recognised success message in the answer. */
+        val notice: (String) -> Boolean = { false },
+        /** Confirmed by [notice] alone: what the stale state may assume. */
+        val trust: () -> Unit = {},
+        /** Something went wrong after a POST: the next action reads AO3's state first. */
+        val stale: () -> Unit,
+        val overrides: List<Pair<String, String>> = emptyList(),
+    )
+
+    private fun workSpec(
+        workId: Long,
+        pageUrl: HttpUrl,
+        form: suspend (WorkActions) -> Ao3Form?,
+        done: (WorkActions) -> Boolean,
+        confirm: ((WorkActions) -> Boolean)?,
+        notice: (String) -> Boolean = { false },
+        trust: (WorkActions) -> WorkActions = { it },
         overrides: List<Pair<String, String>> = emptyList(),
-        alreadyOk: (String) -> Boolean = { false },
-    ): Loaded<FetchResult.Ok?> {
+    ) = Spec(
+        fetch = { fetchWork(workId, pageUrl) },
+        form = form,
+        done = done,
+        confirm = confirm,
+        ownPage = { resp ->
+            if (!isOwnPage(resp.html)) null
+            else WorkActionsParser.parse(resp.html, resp.finalUrl)
+                .takeIf { WorkActionsParser.workId(it) == workId }
+                ?.let { putWork(workId, it, pageUrl) }
+        },
+        notice = notice,
+        trust = { works.markStale(workId, trust) },
+        stale = { works.markStale(workId) { it } },
+        overrides = overrides,
+    )
+
+    /** The retry rule, then confirmation. Ok only when confirmed (or already in effect before any POST). */
+    private suspend fun <S> perform(initial: S, spec: Spec<S>): Loaded<Unit> {
         var s = initial
-        var f = form(s)
+        var f = spec.form(s)
         if (f == null) {
-            s = fetch().let { it.ok() ?: return it as Loaded.Error }
-            if (done(s)) return Loaded.Ok(null)
-            f = form(s) ?: return failed("form not found")
+            s = spec.fetch().let { it.ok() ?: return it as Loaded.Error }
+            if (spec.done(s)) return Loaded.Ok(Unit)
+            f = spec.form(s) ?: return failed("form not found")
         }
-        val reason: String
-        when (val first = send(f, overrides, alreadyOk)) {
-            is Sent.Done -> return Loaded.Ok(first.response)
-            is Sent.Fail -> return first.error
-            is Sent.Retry -> reason = first.reason
-        }
-        // Re-GET for a fresh token (and to see whether the first POST took effect after all).
-        s = fetch().let { it.ok() ?: return it as Loaded.Error }
-        if (done(s)) return Loaded.Ok(null)
-        f = form(s) ?: return failed("form not found")
-        return when (val second = send(f, overrides, alreadyOk)) {
-            is Sent.Done -> Loaded.Ok(second.response)
-            is Sent.Fail -> second.error
-            is Sent.Retry -> failed("AO3 refused it twice: ${second.reason.ifEmpty { reason }}")
+        val first: Ao3Form = f
+        // From the first POST on, the outcome and its bookkeeping must not be lost to a cancellation.
+        return withContext(NonCancellable) {
+            val reason = when (val sent = send(first, spec.overrides)) {
+                is Sent.Done -> return@withContext settle(sent.response, spec)
+                is Sent.Fail -> { spec.stale(); return@withContext sent.error }
+                is Sent.Retry -> sent.reason
+            }
+            // Re-GET for a fresh token, and to see whether the first POST took effect after all.
+            val refetched = spec.fetch()
+            val fresh = refetched.ok() ?: run {
+                spec.stale()
+                return@withContext refetched as? Loaded.Error ?: failed("AO3 refused it: $reason")
+            }
+            if (spec.done(fresh)) return@withContext Loaded.Ok(Unit)
+            val second = spec.form(fresh) ?: return@withContext failed("form not found")
+            when (val sent = send(second, spec.overrides)) {
+                is Sent.Done -> settle(sent.response, spec)
+                is Sent.Fail -> { spec.stale(); sent.error }
+                is Sent.Retry -> { spec.stale(); failed("AO3 refused it twice: ${sent.reason}") }
+            }
         }
     }
 
-    private suspend fun send(form: Ao3Form, overrides: List<Pair<String, String>>, alreadyOk: (String) -> Boolean): Sent {
+    /** After a 2xx: the item's own page, a recognised notice, or a fresh GET must show the action. */
+    private suspend fun <S> settle(resp: FetchResult.Ok, spec: Spec<S>): Loaded<Unit> {
+        val own = spec.ownPage(resp)
+        if (spec.notice(resp.html)) {
+            if (own == null) spec.trust()
+            return Loaded.Ok(Unit)
+        }
+        val confirm = spec.confirm
+        if (confirm == null) {
+            if (own != null) return Loaded.Ok(Unit)
+            spec.stale()
+            return unconfirmed()
+        }
+        val page = own ?: spec.fetch().ok() ?: run { spec.stale(); return unconfirmed() }
+        return if (confirm(page)) Loaded.Ok(Unit) else unconfirmed()
+    }
+
+    private suspend fun send(form: Ao3Form, overrides: List<Pair<String, String>>): Sent {
         return when (val r = session.authedPost(form, overrides)) {
             is FetchResult.Ok -> {
                 if (!session.state.value.signedIn) return Sent.Fail(notSignedIn())
-                if (alreadyOk(r.html)) return Sent.Done(r)
-                val err = WorkActionsParser.actionError(r.html)
+                val err = if (WorkActionsParser.kudosAlreadyLeft(r.html)) null else WorkActionsParser.actionError(r.html)
                 if (err == null) Sent.Done(r) else Sent.Retry(err)
             }
             FetchResult.Blocked -> Sent.Retry("blocked by Cloudflare")
-            is FetchResult.Failed -> when {
-                r.cause is SessionRenewedException -> Sent.Retry("session renewed")
-                r.cause is IOException && r.cause?.message == "HTTP 422" -> Sent.Retry("HTTP 422")
-                else -> Sent.Fail(Loaded.Error(r))
+            is FetchResult.Failed -> when (val c = r.cause) {
+                is SessionRenewedException -> Sent.Retry("session renewed")
+                is HttpStatusException -> if (c.code == 422) Sent.Retry("HTTP 422") else Sent.Fail(mayHaveTakenEffect(r))
+                else -> Sent.Fail(mayHaveTakenEffect(r))
             }
-            else -> Sent.Fail(Loaded.Error(r))
+            // Not processed: AO3 (or Cloudflare) turned the request away.
+            is FetchResult.RateLimited, FetchResult.NotFound -> Sent.Fail(Loaded.Error(r))
         }
     }
 
@@ -275,6 +372,7 @@ class ActionRepository(private val session: Session) {
         set: (WorkActions, Boolean) -> WorkActions,
         form: (WorkActions) -> Ao3Form?,
     ): Loaded<Boolean> {
+        syncAccount()
         if (session.actingAccount.value == null) return notSignedIn()
         val m = lock("$kind:$workId")
         if (!m.tryLock()) return Loaded.Ok(works.flow.value[workId]?.let(get) ?: false)
@@ -283,17 +381,14 @@ class ActionRepository(private val session: Session) {
             val target = !get(known.value)
             works.overlay(workId, kind) { set(it, target) }
             try {
-                val r = perform(
-                    initial = known.value,
-                    fetch = { fetchWork(workId, known.pageUrl) },
+                val r = perform(known.value, workSpec(
+                    workId, known.pageUrl,
                     form = { form(it) },
                     done = { get(it) == target },
-                )
+                    confirm = { get(it) == target },
+                ))
                 return when (r) {
-                    is Loaded.Ok -> {
-                        afterWork(workId, r.value) { set(it, target) }
-                        Loaded.Ok(works.get(workId)?.value?.let(get) ?: target)
-                    }
+                    is Loaded.Ok -> Loaded.Ok(target)
                     is Loaded.Error -> r
                 }
             } finally {
@@ -303,26 +398,6 @@ class ActionRepository(private val session: Session) {
             m.unlock()
         }
     }
-
-    /**
-     * After a successful POST: the response page, when it is this work's signed-in page, becomes the state
-     * (with [trust] applied for what the page may not show); otherwise [trust] is applied to the known state
-     * and its forms are marked stale (the next action GETs the page first).
-     */
-    private fun afterWork(workId: Long, response: FetchResult.Ok?, trust: (WorkActions) -> WorkActions) {
-        response ?: return // a re-GET found it already done; state came from that page
-        val parsed = if (isOwnPage(response.html)) WorkActionsParser.parse(response.html, response.finalUrl) else null
-        val pageUrl = works.get(workId)?.pageUrl ?: Ao3Urls.chapter(workId, null)
-        if (parsed != null && WorkActionsParser.workId(parsed) == workId) {
-            works.put(workId, trustOnlyKudos(parsed, trust), pageUrl)
-        } else {
-            works.markStale(workId, trust)
-        }
-    }
-
-    /** The page is the truth for toggles and bookmarks; kudos lists may truncate, so kudos given is kept. */
-    private fun trustOnlyKudos(parsed: WorkActions, trust: (WorkActions) -> WorkActions): WorkActions =
-        if (trust(parsed).kudosGiven && !parsed.kudosGiven) parsed.copy(kudosGiven = true) else parsed
 
     private class Known(val value: WorkActions, val pageUrl: HttpUrl)
 
@@ -343,18 +418,26 @@ class ActionRepository(private val session: Session) {
         if (!session.state.value.signedIn || !isOwnPage(r.html)) return notSignedIn()
         val a = WorkActionsParser.parse(r.html, r.finalUrl)
         if (WorkActionsParser.workId(a)?.let { it != workId } == true) return failed("not this work's page")
-        works.put(workId, a, url)
-        return Loaded.Ok(a)
+        return Loaded.Ok(putWork(workId, a, url))
     }
 
-    private suspend fun fetchList(page: HttpUrl): Loaded<ListActions> {
-        val r = session.authedGet(page)
+    /** Stores [a] under the list's [key] (whatever [url] it was fetched from). */
+    private suspend fun fetchList(key: String, url: HttpUrl): Loaded<ListActions> {
+        val r = session.authedGet(url)
         if (r !is FetchResult.Ok) return Loaded.Error(r)
         if (!session.state.value.signedIn || !isOwnPage(r.html)) return notSignedIn()
         val l = WorkActionsParser.parseList(r.html, r.finalUrl)
         if (l.subscribe == null) return failed("subscribe form not found")
-        lists.put(page.toString(), l, page)
+        lists.put(key, l, url)
         return Loaded.Ok(l)
+    }
+
+    /** Stores [a], keeping a confirmed kudos; returns what was stored. */
+    private fun putWork(workId: Long, a: WorkActions, pageUrl: HttpUrl): WorkActions {
+        if (a.kudosGiven) kudosed += workId
+        val v = if (!a.kudosGiven && workId in kudosed) a.copy(kudosGiven = true) else a
+        works.put(workId, v, pageUrl)
+        return v
     }
 
     private suspend fun bookmarkFormFor(a: WorkActions): Ao3Form? {
@@ -373,6 +456,15 @@ class ActionRepository(private val session: Session) {
         return s.signedIn && s.username.equals(me, ignoreCase = true)
     }
 
+    /** Drops all state when the acting account changed since it was gathered. */
+    @Synchronized private fun syncAccount() {
+        val now = session.actingAccount.value?.lowercase()
+        if (now != account) {
+            account = now
+            clear()
+        }
+    }
+
     private fun lock(key: String): Mutex = locks.computeIfAbsent(key) { Mutex() }
 
     private fun <T> Loaded<T>.ok(): T? = (this as? Loaded.Ok)?.value
@@ -380,21 +472,38 @@ class ActionRepository(private val session: Session) {
     private fun notSignedIn() = Loaded.Error(FetchResult.Failed(NotSignedInException()))
     private fun notAList() = Loaded.Error(FetchResult.Failed(IllegalArgumentException("not a series or author list")))
     private fun failed(why: String) = Loaded.Error(FetchResult.Failed(ActionFailedException(why)))
+    private fun unconfirmed() = Loaded.Error(FetchResult.Failed(ActionUnconfirmedException("AO3 didn't show the change")))
+    private fun mayHaveTakenEffect(r: FetchResult) = Loaded.Error(FetchResult.Failed(ActionMayHaveTakenEffectException(r)))
 
-    private companion object {
+    companion object {
         private val bookmarkPath = Regex("^/bookmarks/\\d+/?$")
+        private const val KUDOS_THANKS = "Thank you for leaving kudos"
+        private const val COMMENT_CREATED = "Comment created"
 
-        fun isEditForm(f: Ao3Form) = f.method == "put" || bookmarkPath.matches(f.action.encodedPath)
+        /**
+         * The [listState] key of a list URL: its subscribe page ([Ao3Urls.subscribePage]) with the user name
+         * lower-cased (AO3 user names are case-insensitive). Null when [listUrl] is not a series or author list.
+         */
+        fun listKey(listUrl: HttpUrl): String? {
+            val page = Ao3Urls.subscribePage(listUrl) ?: return null
+            val seg = page.pathSegments
+            return if (seg[0] == "users") Ao3Urls.user(seg[1].lowercase()).toString() else page.toString()
+        }
 
-        fun matchesChapter(f: Ao3Form, chapterId: Long?) =
+        private fun isEditForm(f: Ao3Form) = f.method == "put" || bookmarkPath.matches(f.action.encodedPath)
+
+        private fun matchesChapter(f: Ao3Form, chapterId: Long?) =
             chapterId == null || f.action.encodedPath == "/chapters/$chapterId/comments"
 
-        fun sameSubscribable(a: Ao3Form, b: Ao3Form?): Boolean =
+        private fun matches(saved: BookmarkInput, input: BookmarkInput) =
+            saved.isPrivate == input.isPrivate && saved.isRec == input.isRec
+
+        private fun sameSubscribable(a: Ao3Form, b: Ao3Form?): Boolean =
             b == null || (a.last("subscription[subscribable_id]") == b.last("subscription[subscribable_id]") &&
                 a.last("subscription[subscribable_type]") == b.last("subscription[subscribable_type]"))
 
         /** Rails checkbox pairs: the hidden "0" stays, a "1" after it when checked (Rails reads the last). */
-        fun bookmarkOverrides(input: BookmarkInput): List<Pair<String, String>> = buildList {
+        private fun bookmarkOverrides(input: BookmarkInput): List<Pair<String, String>> = buildList {
             add(WorkActionsParser.NOTES to input.notes)
             add(WorkActionsParser.TAGS to input.tags.map { it.trim() }.filter { it.isNotEmpty() }.joinToString(", "))
             add(WorkActionsParser.PRIVATE to "0")
@@ -418,6 +527,13 @@ private class Book<K : Any, S : Any> {
 
     @Synchronized fun put(k: K, v: S, pageUrl: HttpUrl) {
         entries[k] = Entry(v, pageUrl, stale = false)
+        publish()
+    }
+
+    /** Applies [change] to the known value, keeping its stale flag. */
+    @Synchronized fun modify(k: K, change: (S) -> S) {
+        val e = entries[k] ?: return
+        entries[k] = Entry(change(e.value), e.pageUrl, e.stale)
         publish()
     }
 

@@ -131,6 +131,13 @@ object WorkActionsParser {
     fun kudosAlreadyLeft(html: String): Boolean =
         Jsoup.parse(html).select(".flash, #error, div.error, #kudos_message").any { it.text().contains("already left kudos", ignoreCase = true) }
 
+    /** A non-error flash (or `#kudos_message`) containing one of [phrases], case-insensitively. */
+    fun successNotice(html: String, vararg phrases: String): Boolean =
+        Jsoup.parse(html).select(".flash, #kudos_message").any { el ->
+            !el.hasClass("error") && !el.hasClass("comment_error") && !el.hasClass("kudos_error") &&
+                phrases.any { p -> el.text().contains(p, ignoreCase = true) }
+        }
+
     private fun bookmarkFormIn(doc: Document, baseUrl: HttpUrl): Ao3Form? {
         val el: Element? = doc.selectFirst("#bookmark-form form[action]")
             ?: doc.select("form[action]").firstOrNull { f ->

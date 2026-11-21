@@ -13,6 +13,9 @@ sealed interface FetchResult {
     data class Failed(val cause: Throwable?) : FetchResult
 }
 
+/** The cause in [FetchResult.Failed] for an unexpected HTTP status (not 2xx, 404, 429 or a challenge). */
+class HttpStatusException(val code: Int) : java.io.IOException("HTTP $code")
+
 /** Implemented in :app with a WebView. */
 fun interface ChallengeSolver {
     suspend fun solve(url: HttpUrl): Boolean

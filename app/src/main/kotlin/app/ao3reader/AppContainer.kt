@@ -96,7 +96,7 @@ class AppContainer(val context: Context) {
     val libraryRepo: LibraryRepository by lazy { LibraryRepository(session, db) }
 
     /** Kudos, bookmarks, mark for later, subscriptions (works, series, authors) and comments. */
-    val actionRepo: ActionRepository by lazy { ActionRepository(session) }
+    val actionRepo: ActionRepository by lazy { ActionRepository(session, appScope) }
 
     /** Signed in while an account acts (restricted works show), else signed out. */
     val workListRepo: WorkListRepository by lazy {

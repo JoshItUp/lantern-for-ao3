@@ -36,12 +36,17 @@ class Ao3Fetcher(
     private val sleep: suspend (Long) -> Unit = { delay(it) },
 ) : Fetcher {
     private val mutex = Mutex()
+    /**
+     * POSTs never retry at the transport level: OkHttp's retryOnConnectionFailure would resend a form whose
+     * first copy may already have reached AO3. GETs keep [client] as given.
+     */
+    private val postClient: OkHttpClient = client.newBuilder().retryOnConnectionFailure(false).build()
     private var lastStart: Long? = null
 
     private class Raw(val code: Int, val headers: Headers, val body: String, val finalUrl: HttpUrl)
 
     override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean): FetchResult =
-        fetch(url, interactive = interactive, resendAfterSolve = true) {
+        fetch(url, interactive = interactive, resendAfterSolve = true, http = client) {
             Request.Builder().url(url).headers(accept).apply {
                 if (anonymous) {
                     tag(Anonymous::class.java, Anonymous)
@@ -56,7 +61,7 @@ class Ao3Fetcher(
     override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?, interactive: Boolean): FetchResult =
         // A solved challenge is not followed by a resubmit: the form's authenticity token may be stale,
         // and resending a non-idempotent request is never safe. The caller re-GETs the form instead.
-        fetch(url, interactive = interactive, resendAfterSolve = false) {
+        fetch(url, interactive = interactive, resendAfterSolve = false, http = postClient) {
             val body = FormBody.Builder().apply { fields.forEach { (k, v) -> add(k, v) } }.build()
             Request.Builder().url(url).headers(accept).post(body).build()
         }
@@ -78,6 +83,7 @@ class Ao3Fetcher(
         url: HttpUrl,
         interactive: Boolean,
         resendAfterSolve: Boolean,
+        http: OkHttpClient,
         build: () -> Request,
     ): FetchResult = mutex.withLock {
         var rateRetried = false
@@ -85,7 +91,7 @@ class Ao3Fetcher(
         // Bounded: each branch that loops sets a once-only flag first.
         while (true) {
             val raw = try {
-                request(build())
+                request(http, build())
             } catch (e: CancellationException) {
                 throw e
             } catch (e: IOException) {
@@ -123,20 +129,20 @@ class Ao3Fetcher(
                     sleep(sec * 1000)
                     continue
                 }
-                else -> return@withLock FetchResult.Failed(IOException("HTTP ${raw.code}"))
+                else -> return@withLock FetchResult.Failed(HttpStatusException(raw.code))
             }
         }
         @Suppress("UNREACHABLE_CODE")
         error("unreachable")
     }
 
-    private suspend fun request(req: Request): Raw {
+    private suspend fun request(http: OkHttpClient, req: Request): Raw {
         lastStart?.let { last ->
             val wait = minIntervalMs - (clock() - last)
             if (wait > 0) sleep(wait)
         }
         lastStart = clock()
-        return client.newCall(req).await()
+        return http.newCall(req).await()
     }
 
     /** Runs the call on OkHttp's dispatcher; cancelling the coroutine cancels the call. */
