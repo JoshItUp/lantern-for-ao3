@@ -5,6 +5,7 @@ import app.ao3reader.ao3.model.ChapterRef
 import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.data.ChapterSource
 import app.ao3reader.data.Loaded
+import app.ao3reader.data.NotAChapterPageException
 import app.ao3reader.data.WorkRepository
 import app.ao3reader.data.db.DownloadChapterEntity
 import app.ao3reader.data.db.DownloadDao
@@ -33,7 +34,7 @@ class DownloadAwareChapterSource(
     private val scope: CoroutineScope,
     private val isActing: () -> Boolean,
 ) : ChapterSource {
-    /** Per work: the latest merged list that added chapters to the stored one; null until one arrives. */
+    /** Per work: the result of the latest online list check (merged, or the stored list); null while it runs. */
     private val merged = ConcurrentHashMap<Long, MutableStateFlow<List<ChapterRef>?>>()
 
     private fun mergedFlow(workId: Long) = merged.getOrPut(workId) { MutableStateFlow(null) }
@@ -48,7 +49,10 @@ class DownloadAwareChapterSource(
 
     override fun listUpdates(workId: Long): Flow<List<ChapterRef>> = mergedFlow(workId).filterNotNull()
 
-    /** The stored list at once; the online list is fetched in the background and merged into [listUpdates]. */
+    /**
+     * The stored list at once; the online list is fetched in the background, and [listUpdates] then emits once:
+     * the merged list, or the stored list when the check failed or found nothing new.
+     */
     override suspend fun chapters(workId: Long): Loaded<List<ChapterRef>> {
         val rows = storedRows(workId) ?: return online.chapters(workId)
         val stored = rows.map { ChapterRef(it.chapterId, it.number, it.title) }
@@ -56,16 +60,20 @@ class DownloadAwareChapterSource(
         // A list from an earlier open must not answer this one.
         flow.value = null
         scope.launch {
+            var result = stored
             try {
-                val list = (online.chapters(workId) as? Loaded.Ok)?.value?.takeIf { it.isNotEmpty() } ?: return@launch
-                downloads.notePostedRemote(workId, list.size)
-                val ids = stored.mapTo(HashSet()) { it.chapterId }
-                val added = list.filter { it.chapterId !in ids }
-                if (added.isNotEmpty()) flow.value = stored + added
+                val list = (online.chapters(workId) as? Loaded.Ok)?.value?.takeIf { it.isNotEmpty() }
+                if (list != null) {
+                    downloads.notePostedRemote(workId, list.size)
+                    // Null-tolerant: a one-shot is stored without a chapter id but listed online with one.
+                    val added = list.filter { o -> stored.none { it.sameChapter(o) } }
+                    if (added.isNotEmpty()) result = stored + added
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
             }
+            flow.value = result
         }
         return Loaded.Ok(stored)
     }
@@ -83,9 +91,10 @@ class DownloadAwareChapterSource(
         }
         return when (val r = online.chapter(workId, ref)) {
             is Loaded.Ok -> r
-            is Loaded.Error -> when (r.result) {
-                is FetchResult.Failed, FetchResult.Blocked, is FetchResult.RateLimited ->
-                    Loaded.Error(FetchResult.Failed(NotDownloadedException()))
+            is Loaded.Error -> when (val f = r.result) {
+                // A signed-out restricted work keeps its own message; only network failures are "not downloaded".
+                is FetchResult.Failed -> if (f.cause is NotAChapterPageException) r else notDownloaded()
+                FetchResult.Blocked, is FetchResult.RateLimited -> notDownloaded()
                 else -> r
             }
         }
@@ -103,6 +112,12 @@ class DownloadAwareChapterSource(
             }
         }
     }
+
+    private fun notDownloaded() = Loaded.Error(FetchResult.Failed(NotDownloadedException()))
+
+    /** The same chapter: by id, else (an id unknown on either side) by number. */
+    private fun ChapterRef.sameChapter(o: ChapterRef) =
+        if (chapterId != null && o.chapterId != null) chapterId == o.chapterId else number == o.number
 
     /** By chapter id, else (an id unknown on either side) by number. */
     private fun List<DownloadChapterEntity>.find(ref: ChapterRef): DownloadChapterEntity? =

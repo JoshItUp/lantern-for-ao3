@@ -26,7 +26,7 @@ interface ChapterSource {
     suspend fun chapters(workId: Long): Loaded<List<ChapterRef>>
     suspend fun chapter(workId: Long, ref: ChapterRef): Loaded<ChapterContent>
     fun prefetch(workId: Long, ref: ChapterRef)
-    /** Longer chapter lists found after [chapters] returned (a downloaded work's online list); none by default. */
+    /** Lists found after [chapters] returned (a downloaded work: once per [chapters] call, when its online check ends); none by default. */
     fun listUpdates(workId: Long): Flow<List<ChapterRef>> = emptyFlow()
 }
 

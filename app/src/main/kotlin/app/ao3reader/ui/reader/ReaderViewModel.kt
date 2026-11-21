@@ -221,7 +221,8 @@ class ReaderViewModel(
 
     /** Whether the chapter to open (route or restored handle, else saved progress) is in [list]; true when there is none. */
     private fun targetIn(list: List<ChapterRef>): Boolean {
-        startChapterId?.let { id -> return list.any { it.chapterId == id } }
+        // Null-tolerant: a stored one-shot has no chapter id, while a History route carries AO3's.
+        startChapterId?.let { id -> return list.any { it.matches(id, startNumber) } }
         saved?.let { p -> return list.any { it.matches(p.chapterId, p.chapterNumber) } }
         return true
     }
@@ -237,7 +238,7 @@ class ReaderViewModel(
 
     /** A longer list arrived (a downloaded work's online chapters): adopt it, keeping the chapter being read. */
     private fun applyListUpdate(list: List<ChapterRef>) {
-        if (list.isEmpty()) return
+        if (list.isEmpty() || list == _state.value.chapters) return
         _state.update { s ->
             // Nothing listed yet (open() is still deciding), or only the single-entry fallback: open() owns that.
             if (s.chapters.isEmpty() || !s.chapterListLoaded) return@update s

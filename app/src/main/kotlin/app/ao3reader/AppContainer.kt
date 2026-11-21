@@ -134,7 +134,12 @@ class AppContainer(val context: Context) {
         ).also { repo ->
             // A signed-in chapter page carries AO3's posted-chapter count: "N new chapters" for downloaded works.
             repo.onChapterPage = { workId, html ->
-                appScope.launch { WorkMetaParser.postedChapters(html)?.let { downloadRepo.notePostedRemote(workId, it) } }
+                appScope.launch {
+                    // Checked first: parsing builds a second full DOM, wasted on works that aren't downloaded.
+                    if (db.downloadDao().get(workId)?.hasCopy == true) {
+                        WorkMetaParser.postedChapters(html)?.let { downloadRepo.notePostedRemote(workId, it) }
+                    }
+                }
             }
         }
     }
