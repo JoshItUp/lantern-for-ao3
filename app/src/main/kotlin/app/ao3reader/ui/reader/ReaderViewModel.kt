@@ -357,7 +357,11 @@ class ReaderViewModel(
     // An open comment sheet and its draft survive process death (savedState); the bookmark sheet re-reads AO3.
     private val _sheet = MutableStateFlow<ActionSheet?>(
         savedState.get<Int>(KEY_COMMENT_NUMBER)?.let { n ->
-            ActionSheet.Comment(savedState.get<String>(KEY_COMMENT_CHAPTER)?.toLongOrNull(), n)
+            ActionSheet.Comment(
+                savedState.get<String>(KEY_COMMENT_CHAPTER)?.toLongOrNull(), n,
+                mustCheck = savedState.get<Boolean>(KEY_COMMENT_MUST_CHECK) ?: false,
+                failedOnce = savedState.get<Boolean>(KEY_COMMENT_FAILED_ONCE) ?: false,
+            )
         }
     )
     val sheet: StateFlow<ActionSheet?> = _sheet.asStateFlow()
@@ -527,12 +531,25 @@ class ReaderViewModel(
         if (src.actingAccount.value == null || _sheet.value != null) return
         val s = _state.value
         val ref = s.chapters.getOrNull(s.index) ?: s.content?.ref ?: return
-        setSheet(ActionSheet.Comment(ref.chapterId, ref.number))
+        setSheet(ActionSheet.Comment(ref.chapterId, ref.number, mustCheck = commentMustCheck, failedOnce = commentFailedOnce))
     }
+
+    /**
+     * The guard after an uncertain post, kept with the draft (savedState): closing and reopening the
+     * sheet, or process death, still shows Post off until the text is edited or [postAgain].
+     */
+    private var commentMustCheck: Boolean
+        get() = savedState.get<Boolean>(KEY_COMMENT_MUST_CHECK) ?: false
+        set(v) { savedState[KEY_COMMENT_MUST_CHECK] = v }
+    /** A post of this draft failed: the button reads "Post again". */
+    private var commentFailedOnce: Boolean
+        get() = savedState.get<Boolean>(KEY_COMMENT_FAILED_ONCE) ?: false
+        set(v) { savedState[KEY_COMMENT_FAILED_ONCE] = v }
 
     /** Editing the text after an uncertain post is the owner's own change: Post is enabled again. */
     fun setCommentDraft(text: String) {
         if (text != _commentDraft.value) {
+            commentMustCheck = false
             _sheet.update { s -> if (s is ActionSheet.Comment && s.mustCheck) s.copy(mustCheck = false) else s }
         }
         _commentDraft.value = text
@@ -545,7 +562,7 @@ class ReaderViewModel(
      */
     fun postComment() {
         val target = _sheet.value as? ActionSheet.Comment ?: return
-        if (target.mustCheck) return
+        if (target.mustCheck || commentMustCheck) return
         val text = _commentDraft.value
         if (text.isBlank()) return
         _sheet.update { s -> if (s is ActionSheet.Comment) s.copy(error = null) else s }
@@ -554,6 +571,11 @@ class ReaderViewModel(
             onError = { msg, err ->
                 val cause = (err.result as? FetchResult.Failed)?.cause
                 val uncertain = cause is ActionUnconfirmedException || cause is ActionMayHaveTakenEffectException
+                // Kept even if the sheet was closed meanwhile: reopening it still shows the guard.
+                if (_commentDraft.value == text) {
+                    commentFailedOnce = true
+                    if (uncertain) commentMustCheck = true
+                }
                 showInSheet { s ->
                     (s as? ActionSheet.Comment)?.takeIf { it.chapterId == target.chapterId }
                         ?.copy(error = msg.text, mustCheck = uncertain, failedOnce = true)
@@ -561,13 +583,19 @@ class ReaderViewModel(
             },
         ) {
             _commentDraft.update { if (it == text) "" else it }
-            if (_commentDraft.value.isEmpty()) savedState.remove<String>(KEY_COMMENT_DRAFT)
+            if (_commentDraft.value.isEmpty()) {
+                savedState.remove<String>(KEY_COMMENT_DRAFT)
+                commentMustCheck = false
+                commentFailedOnce = false
+            }
             if ((_sheet.value as? ActionSheet.Comment)?.chapterId == target.chapterId) setSheet(null)
         }
     }
 
     /** The owner checked the work after an uncertain post and still wants to post. */
     fun postAgain() {
+        if (_commentDraft.value.isBlank()) return
+        commentMustCheck = false
         _sheet.update { s -> if (s is ActionSheet.Comment) s.copy(mustCheck = false) else s }
         postComment()
     }
@@ -607,6 +635,8 @@ class ReaderViewModel(
         private const val KEY_COMMENT_DRAFT = "action.commentDraft"
         private const val KEY_COMMENT_NUMBER = "action.commentNumber"
         private const val KEY_COMMENT_CHAPTER = "action.commentChapterId"
+        private const val KEY_COMMENT_MUST_CHECK = "action.commentMustCheck"
+        private const val KEY_COMMENT_FAILED_ONCE = "action.commentFailedOnce"
 
         fun factory(container: AppContainer, workId: Long, chapterId: Long?, number: Int): ViewModelProvider.Factory =
             viewModelFactory {

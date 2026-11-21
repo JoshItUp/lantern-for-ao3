@@ -177,7 +177,8 @@ class AccountViewModel(private val source: AccountSource) : ViewModel() {
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer { AccountViewModel(container.session.asAccountSource {
-                // Each cleanup runs even if one before it throws; the first failure is rethrown at the end.
+                // Each cleanup runs even if one before it throws (nested finally); if several throw, the
+                // last one propagates, and asAccountSource swallows it so sign-out itself never fails.
                 try {
                     container.actionRepo.clear()
                 } finally {
