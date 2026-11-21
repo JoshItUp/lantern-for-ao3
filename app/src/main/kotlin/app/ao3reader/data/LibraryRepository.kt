@@ -2,6 +2,7 @@ package app.ao3reader.data
 
 import app.ao3reader.account.Session
 import app.ao3reader.ao3.net.FetchResult
+import app.ao3reader.ao3.parse.AccountParser
 import app.ao3reader.ao3.parse.Ao3Urls
 import app.ao3reader.ao3.parse.LibraryPage
 import app.ao3reader.ao3.parse.LibraryParser
@@ -75,9 +76,11 @@ class LibraryRepository(
         // A signed-out page (re-login impossible or failed) parses as an empty or public-only list: never show or cache it.
         if (!session.state.value.signedIn) return notSignedIn()
         val parsed = withContext(parseDispatcher) {
+            // Signed in as someone else (the account changed mid-request): not this user's library.
+            if (!pageIsFor(user, r.html)) return@withContext null
             if (section == LibrarySection.BOOKMARKS) LibraryParser.bookmarks(r.html, page)
             else LibraryParser.readings(r.html, page)
-        }
+        } ?: return notSignedIn()
         withContext(ioDispatcher) {
             if (page == 1) {
                 db.libraryPageDao().upsert(
@@ -98,7 +101,10 @@ class LibraryRepository(
         val r = session.authedGet(Ao3Urls.subscriptions(user, page))
         if (r !is FetchResult.Ok) return Loaded.Error(r)
         if (!session.state.value.signedIn) return notSignedIn()
-        return Loaded.Ok(withContext(parseDispatcher) { LibraryParser.subscriptions(r.html, page, r.finalUrl) })
+        val parsed = withContext(parseDispatcher) {
+            if (pageIsFor(user, r.html)) LibraryParser.subscriptions(r.html, page, r.finalUrl) else null
+        } ?: return notSignedIn()
+        return Loaded.Ok(parsed)
     }
 
     /** Drops every cached page (on sign-out). Read marks are kept: they are about works, not the account. */
@@ -106,6 +112,10 @@ class LibraryRepository(
 
     /** The acting account, so a lapsed session still reaches [Session.authedGet] and its silent re-login. */
     private fun username(): String? = session.actingAccount.value
+
+    /** The page's greeting names [user] (AO3 names are case-insensitive). */
+    private fun pageIsFor(user: String, html: String): Boolean =
+        AccountParser.state(html).username.equals(user, ignoreCase = true)
 
     private fun notSignedIn() = Loaded.Error(FetchResult.Failed(NotSignedInException()))
 }

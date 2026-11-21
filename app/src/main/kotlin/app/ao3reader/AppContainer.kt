@@ -23,6 +23,7 @@ import app.ao3reader.data.WorkRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.withContext
 import app.ao3reader.data.db.AppDatabase
 import app.ao3reader.data.db.MIGRATION_2_3
 import app.ao3reader.net.AnonymousCookieInterceptor
@@ -50,7 +51,7 @@ class AppContainer(val context: Context) {
         ) { WebSettings.getDefaultUserAgent(context) }
     }
 
-    val okHttpClient: OkHttpClient by lazy {
+    private val okHttpLazy = lazy {
         OkHttpClient.Builder()
             .cookieJar(PersistentCookieJar { CookieManager.getInstance() })
             // Network level: runs after the bridge adds the jar's cookies and before it stores new ones.
@@ -59,6 +60,19 @@ class AppContainer(val context: Context) {
             .readTimeout(30, TimeUnit.SECONDS)
             .cache(Cache(File(context.cacheDir, "http"), 10L * 1024 * 1024))
             .build()
+    }
+    val okHttpClient: OkHttpClient by okHttpLazy
+
+    /** The client if something already built it; null otherwise (and nothing is started). */
+    fun okHttpClientIfBuilt(): OkHttpClient? = if (okHttpLazy.isInitialized()) okHttpLazy.value else null
+
+    /**
+     * Drops every response in the HTTP disk cache (on sign-out: signed-in pages may be in it). A client
+     * that was never built has written nothing this run, and building one would start the network stack.
+     */
+    suspend fun evictHttpCache() {
+        val client = okHttpClientIfBuilt() ?: return
+        withContext(Dispatchers.IO) { client.cache?.evictAll() }
     }
 
     /** The network chain without account observation; [session] uses it for its own requests. */

@@ -7,6 +7,7 @@ import app.ao3reader.ao3.parse.AccountState
 import app.ao3reader.ao3.parse.Ao3Form
 import app.ao3reader.ao3.parse.Ao3Urls
 import app.ao3reader.ao3.parse.FormParser
+import app.ao3reader.data.NotSignedInException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -208,7 +209,9 @@ class Session(
      * Posts [form] with [overrides] applied: every field named in [overrides] is replaced (at the position
      * of its first occurrence), new names are appended.
      *
-     * A POST is never resent. If the state is already signed out, the re-login happens before sending.
+     * A POST is never resent. If the state is already signed out, the re-login happens before sending;
+     * when that is impossible (no credentials, paused, needs sign-in) or fails, nothing is sent and the
+     * result is `Failed(NotSignedInException)`.
      * If the response shows signed out, the session is renewed and the result is
      * `Failed(SessionRenewedException)` when that worked: re-GET the form's page and submit again. If the
      * renewal failed, the signed-out response itself is returned.
@@ -236,10 +239,11 @@ class Session(
         var gen = generation.get()
         var relogged = false
         // The state already says signed out (observed elsewhere): log in before the request, not after.
-        if (!_state.value.signedIn && canRelogin(interactive)) {
-            relogged = true
-            relogin(gen, interactive)
+        if (!_state.value.signedIn) {
+            val renewed = canRelogin(interactive) && relogin(gen, interactive).also { relogged = true }
             gen = generation.get()
+            // A POST with dead cookies would act as a guest (only AO3's CSRF check stops it): never send it.
+            if (isPost && !renewed) return FetchResult.Failed(NotSignedInException())
         }
         val first = request()
         if (!showsSignedOut(first)) return first

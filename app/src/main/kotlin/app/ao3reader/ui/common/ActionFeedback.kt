@@ -10,6 +10,9 @@ import app.ao3reader.data.NotSignedInException
 /** The account actions, as the UI names them. */
 enum class WorkAction { KUDOS, BOOKMARK, LATER, SUBSCRIBE, COMMENT }
 
+/** Shown when a comment post may or may not have gone through (also on a reopened, guarded sheet). */
+const val COMMENT_MAY_NOT_HAVE_POSTED = "Your comment may not have posted — check the work before trying again."
+
 /** One line of feedback for a snackbar; [toAccount] adds an action that opens the Account screen. */
 data class ActionMessage(val text: String, val toAccount: Boolean = false)
 
@@ -36,7 +39,7 @@ private fun errorFeedback(action: WorkAction, r: FetchResult): ActionMessage = w
     is FetchResult.RateLimited -> ActionMessage("AO3 asked us to slow down. Try again in ${r.retryAfterSec} s.")
     is FetchResult.Failed -> when (r.cause) {
         is ActionUnconfirmedException -> ActionMessage(
-            if (action == WorkAction.COMMENT) "Your comment may not have posted — check the work before trying again."
+            if (action == WorkAction.COMMENT) COMMENT_MAY_NOT_HAVE_POSTED
             else "Couldn't confirm with AO3 — check the work page."
         )
         is ActionMayHaveTakenEffectException ->

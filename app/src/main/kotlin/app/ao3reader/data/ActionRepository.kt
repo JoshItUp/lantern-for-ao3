@@ -366,6 +366,8 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
             FetchResult.Blocked -> Sent.Retry("blocked by Cloudflare")
             is FetchResult.Failed -> when (val c = r.cause) {
                 is SessionRenewedException -> Sent.Retry("session renewed")
+                // Known signed out and no re-login possible: Session sent nothing.
+                is NotSignedInException -> Sent.Fail(notSignedIn())
                 is HttpStatusException -> if (c.code == 422) Sent.Retry("HTTP 422") else Sent.Fail(mayHaveTakenEffect(r))
                 else -> Sent.Fail(mayHaveTakenEffect(r))
             }

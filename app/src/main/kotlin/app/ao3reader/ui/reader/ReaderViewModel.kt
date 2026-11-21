@@ -20,6 +20,7 @@ import app.ao3reader.data.ActionUnconfirmedException
 import app.ao3reader.data.ChapterSource
 import app.ao3reader.data.WorkActionSource
 import app.ao3reader.ui.common.ActionMessage
+import app.ao3reader.ui.common.COMMENT_MAY_NOT_HAVE_POSTED
 import app.ao3reader.ui.common.WorkAction
 import app.ao3reader.ui.common.actionFeedback
 import kotlinx.coroutines.CancellationException
@@ -357,7 +358,7 @@ class ReaderViewModel(
     // An open comment sheet and its draft survive process death (savedState); the bookmark sheet re-reads AO3.
     private val _sheet = MutableStateFlow<ActionSheet?>(
         savedState.get<Int>(KEY_COMMENT_NUMBER)?.let { n ->
-            ActionSheet.Comment(
+            commentSheet(
                 savedState.get<String>(KEY_COMMENT_CHAPTER)?.toLongOrNull(), n,
                 mustCheck = savedState.get<Boolean>(KEY_COMMENT_MUST_CHECK) ?: false,
                 failedOnce = savedState.get<Boolean>(KEY_COMMENT_FAILED_ONCE) ?: false,
@@ -531,8 +532,16 @@ class ReaderViewModel(
         if (src.actingAccount.value == null || _sheet.value != null) return
         val s = _state.value
         val ref = s.chapters.getOrNull(s.index) ?: s.content?.ref ?: return
-        setSheet(ActionSheet.Comment(ref.chapterId, ref.number, mustCheck = commentMustCheck, failedOnce = commentFailedOnce))
+        setSheet(commentSheet(ref.chapterId, ref.number, commentMustCheck, commentFailedOnce))
     }
+
+    /** A reopened or restored sheet under the guard says why Post is off (the original error is gone). */
+    private fun commentSheet(chapterId: Long?, number: Int, mustCheck: Boolean, failedOnce: Boolean) =
+        ActionSheet.Comment(
+            chapterId, number,
+            error = if (mustCheck) COMMENT_MAY_NOT_HAVE_POSTED else null,
+            mustCheck = mustCheck, failedOnce = failedOnce,
+        )
 
     /**
      * The guard after an uncertain post, kept with the draft (savedState): closing and reopening the

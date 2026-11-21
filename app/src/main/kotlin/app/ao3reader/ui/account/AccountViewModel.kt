@@ -58,6 +58,22 @@ fun Session.asAccountSource(onSignedOut: suspend () -> Unit = {}): AccountSource
     }
 }
 
+/**
+ * Runs every step in order, even when one before it throws; afterwards the last exception (if any)
+ * propagates, as with nested `finally` blocks.
+ */
+internal suspend fun runEach(steps: List<suspend () -> Unit>) {
+    var error: Throwable? = null
+    for (step in steps) {
+        try {
+            step()
+        } catch (e: Throwable) {
+            error = e
+        }
+    }
+    error?.let { throw it }
+}
+
 @Immutable
 data class AccountUiState(
     val signedIn: Boolean = false,
@@ -177,17 +193,15 @@ class AccountViewModel(private val source: AccountSource) : ViewModel() {
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer { AccountViewModel(container.session.asAccountSource {
-                // Each cleanup runs even if one before it throws (nested finally); if several throw, the
-                // last one propagates, and asAccountSource swallows it so sign-out itself never fails.
-                try {
-                    container.actionRepo.clear()
-                } finally {
-                    try {
-                        container.libraryRepo.clear()
-                    } finally {
-                        withContext(Dispatchers.IO) { container.chapterCache.clear() }
-                    }
-                }
+                // Each cleanup runs even if one before it throws ([runEach]); if several throw, the last
+                // one propagates, and asAccountSource swallows it so sign-out itself never fails.
+                runEach(listOf(
+                    { container.actionRepo.clear() },
+                    { container.libraryRepo.clear() },
+                    { withContext(Dispatchers.IO) { container.chapterCache.clear() } },
+                    // Signed-in responses may sit in the HTTP cache; skipped if the client was never built.
+                    { container.evictHttpCache() },
+                ))
             }) }
         }
     }
