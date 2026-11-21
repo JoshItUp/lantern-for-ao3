@@ -33,6 +33,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -144,6 +146,10 @@ fun BookmarkSheet(
             sheet.note?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
             }
+            // A failed save shows here: a snackbar would sit under the sheet's scrim.
+            sheet.error?.let {
+                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp))
+            }
             Spacer(Modifier.height(16.dp))
             Button(
                 onClick = {
@@ -153,7 +159,7 @@ fun BookmarkSheet(
                 enabled = editable,
                 modifier = Modifier.align(Alignment.End),
             ) {
-                if (saving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                if (saving) CircularProgressIndicator(Modifier.size(18.dp).semantics { contentDescription = "Saving" }, strokeWidth = 2.dp)
                 else Text("Save")
             }
         }

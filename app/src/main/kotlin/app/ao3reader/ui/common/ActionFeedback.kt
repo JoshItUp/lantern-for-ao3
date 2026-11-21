@@ -20,7 +20,8 @@ data class ActionMessage(val text: String, val toAccount: Boolean = false)
 fun actionFeedback(action: WorkAction, result: Loaded<*>): ActionMessage = when (result) {
     is Loaded.Ok -> ActionMessage(
         when (action) {
-            WorkAction.KUDOS -> "Kudos sent"
+            // Ok(false): AO3 already showed kudos given, nothing was sent.
+            WorkAction.KUDOS -> if (result.value == false) "Kudos already given" else "Kudos sent"
             WorkAction.BOOKMARK -> "Bookmarked"
             WorkAction.LATER -> if (result.value == true) "Saved for later" else "Removed from Later"
             WorkAction.SUBSCRIBE -> if (result.value == true) "Subscribed" else "Unsubscribed"

@@ -177,12 +177,15 @@ class AccountViewModel(private val source: AccountSource) : ViewModel() {
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer { AccountViewModel(container.session.asAccountSource {
-                // Each runs even if one before it fails: the account's pages and chapter copies all go.
+                // Each cleanup runs even if one before it throws; the first failure is rethrown at the end.
                 try {
                     container.actionRepo.clear()
-                    container.libraryRepo.clear()
                 } finally {
-                    withContext(Dispatchers.IO) { container.chapterCache.clear() }
+                    try {
+                        container.libraryRepo.clear()
+                    } finally {
+                        withContext(Dispatchers.IO) { container.chapterCache.clear() }
+                    }
                 }
             }) }
         }

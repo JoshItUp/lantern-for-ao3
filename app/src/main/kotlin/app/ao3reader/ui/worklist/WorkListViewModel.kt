@@ -142,12 +142,13 @@ class WorkListViewModel(
         if (src.actingAccount.value == null) return
         val intended = src.listState.value[key]?.subscribed != true
         val d = r.launch(runKey!!) {
-            if (src.listState.value[key] == null) {
-                when (val fresh = src.refreshList(list)) {
-                    is Loaded.Error -> return@launch fresh
-                    is Loaded.Ok -> if (fresh.value.subscribed == intended) return@launch Loaded.Ok(intended)
-                }
+            // Read first when unknown; and if the state (read, or updated since the tap) already is what
+            // the owner meant, nothing is sent.
+            val now = src.listState.value[key] ?: when (val fresh = src.refreshList(list)) {
+                is Loaded.Error -> return@launch fresh
+                is Loaded.Ok -> fresh.value
             }
+            if (now.subscribed == intended) return@launch Loaded.Ok(intended)
             src.toggleListSubscribe(list)
         } ?: return
         viewModelScope.launch {

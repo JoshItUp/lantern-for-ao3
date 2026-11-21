@@ -32,6 +32,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.ao3reader.ui.common.AppIcons
@@ -115,6 +118,7 @@ fun ActionRow(
             label = "Comment",
             icon = AppIcons.CommentOutline,
             done = false,
+            stateful = false,
             running = WorkAction.COMMENT in ui.running,
             enabled = WorkAction.COMMENT in ui.available,
             onClick = onComment,
@@ -131,6 +135,8 @@ private fun ActionButton(
     running: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
+    /** False for Comment, which has no done state to announce. */
+    stateful: Boolean = true,
 ) {
     TooltipBox(
         positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
@@ -138,9 +144,13 @@ private fun ActionButton(
         state = rememberTooltipState(),
     ) {
         // While its request runs the button is busy (a second tap would only be ignored); the others stay usable.
-        IconButton(onClick = onClick, enabled = enabled && !running) {
+        IconButton(
+            onClick = onClick,
+            enabled = enabled && !running,
+            modifier = Modifier.semantics { if (stateful) stateDescription = if (done) "Done" else "Not done" },
+        ) {
             if (running) {
-                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                CircularProgressIndicator(Modifier.size(20.dp).semantics { contentDescription = "$label, in progress" }, strokeWidth = 2.dp)
             } else {
                 // Done shows in the accent colour even when disabled (kudos given).
                 Icon(icon, contentDescription = label, tint = if (done) MaterialTheme.colorScheme.primary else LocalContentColor.current)
@@ -184,7 +194,7 @@ fun ReaderActionSheets(vm: ReaderViewModel, snackbar: SnackbarHostState, onAccou
         )
         is ActionSheet.Comment -> CommentSheet(
             sheet = s, initialDraft = vm.commentDraft.value, posting = WorkAction.COMMENT in ui.running, sheetState = sheetState,
-            onDraft = vm::setCommentDraft, onPost = vm::postComment, onDismiss = vm::closeSheet,
+            onDraft = vm::setCommentDraft, onPost = vm::postComment, onPostAgain = vm::postAgain, onDismiss = vm::closeSheet,
         )
         null -> Unit
     }
