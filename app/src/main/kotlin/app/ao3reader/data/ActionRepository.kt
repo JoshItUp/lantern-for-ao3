@@ -74,20 +74,20 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
     /** From any signed-in page of [workId]; [pageUrl] is where its forms are fetched again. Other pages are ignored. */
     fun update(workId: Long, html: String, pageUrl: HttpUrl) {
         syncAccount()
-        if (!isOwnPage(html)) return
+        val user = ownUser(html) ?: return
         val a = WorkActionsParser.parse(html, pageUrl)
         if (WorkActionsParser.workId(a)?.let { it != workId } == true) return
-        putWork(workId, a, pageUrl)
+        putWork(workId, a, pageUrl, user)
     }
 
     /** From a signed-in series or user page of the list at [listUrl]; pages without the subscribe form are ignored. */
     fun updateList(listUrl: HttpUrl, html: String, pageUrl: HttpUrl) {
         syncAccount()
         val key = listKey(listUrl) ?: return
-        if (!isOwnPage(html)) return
+        val user = ownUser(html) ?: return
         val l = WorkActionsParser.parseList(html, pageUrl)
         if (l.subscribe == null) return
-        lists.put(key, l, pageUrl)
+        asAccount(user) { lists.put(key, l, pageUrl) }
     }
 
     /** The owner's bookmark on [workId] as the known edit form holds it; null when not bookmarked or no edit form is known. */
@@ -123,6 +123,7 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
     suspend fun kudos(workId: Long): Loaded<Unit> {
         syncAccount()
         if (session.actingAccount.value == null) return notSignedIn()
+        val acct = account
         return lock("kudos:$workId").withLock {
             val known = currentWork(workId).let { it.ok() ?: return@withLock it as Loaded.Error }
             if (known.value.kudosGiven) return@withLock Loaded.Ok(Unit)
@@ -134,7 +135,8 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
                 notice = { html -> WorkActionsParser.kudosAlreadyLeft(html) || WorkActionsParser.successNotice(html, KUDOS_THANKS) },
                 trust = { it.copy(kudosGiven = true) },
             ))
-            if (r is Loaded.Ok) {
+            // Only for the account that sent it: a sign-in as someone else meanwhile must not inherit it.
+            if (r is Loaded.Ok) asAccount(acct) {
                 kudosed += workId
                 works.modify(workId) { it.copy(kudosGiven = true) }
             }
@@ -169,6 +171,7 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
             val start = known.ok() ?: return known as Loaded.Error
             val target = !start.subscribed
             val pageUrl = lists.get(key)?.pageUrl ?: page
+            val acct = account
             lists.overlay(key, "sub") { it.copy(subscribed = target) }
             try {
                 val r = perform(start, Spec(
@@ -177,13 +180,14 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
                     done = { it.subscribed == target },
                     confirm = { it.subscribed == target },
                     ownPage = { resp ->
-                        if (!isOwnPage(resp.html)) null
+                        val user = ownUser(resp.html)
+                        if (user == null) null
                         else WorkActionsParser.parseList(resp.html, resp.finalUrl)
                             .takeIf { it.subscribe != null && sameSubscribable(it.subscribe!!, start.subscribe) }
-                            ?.also { lists.put(key, it, pageUrl) }
+                            ?.takeIf { l -> asAccount(user) { lists.put(key, l, pageUrl) } }
                     },
-                    trust = { lists.markStale(key) { it.copy(subscribed = target) } },
-                    stale = { lists.markStale(key) { it } },
+                    trust = { asAccount(acct) { lists.markStale(key) { it.copy(subscribed = target) } } },
+                    stale = { asAccount(acct) { lists.markStale(key) { it } } },
                 ))
                 return when (r) {
                     is Loaded.Ok -> Loaded.Ok(target)
@@ -280,22 +284,26 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
         notice: (String) -> Boolean = { false },
         trust: (WorkActions) -> WorkActions = { it },
         overrides: List<Pair<String, String>> = emptyList(),
-    ) = Spec(
+    ): Spec<WorkActions> {
+        val acct = account
+        return Spec(
         fetch = { fetchWork(workId, pageUrl) },
         form = form,
         done = done,
         confirm = confirm,
         ownPage = { resp ->
-            if (!isOwnPage(resp.html)) null
+            val user = ownUser(resp.html)
+            if (user == null) null
             else WorkActionsParser.parse(resp.html, resp.finalUrl)
                 .takeIf { WorkActionsParser.workId(it) == workId }
-                ?.let { putWork(workId, it, pageUrl) }
+                ?.let { putWork(workId, it, pageUrl, user) }
         },
         notice = notice,
-        trust = { works.markStale(workId, trust) },
-        stale = { works.markStale(workId) { it } },
+        trust = { asAccount(acct) { works.markStale(workId, trust) } },
+        stale = { asAccount(acct) { works.markStale(workId) { it } } },
         overrides = overrides,
-    )
+        )
+    }
 
     /** The retry rule, then confirmation. Ok only when confirmed (or already in effect before any POST). */
     private suspend fun <S> perform(initial: S, spec: Spec<S>): Loaded<Unit> {
@@ -415,29 +423,35 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
     private suspend fun fetchWork(workId: Long, url: HttpUrl): Loaded<WorkActions> {
         val r = session.authedGet(url)
         if (r !is FetchResult.Ok) return Loaded.Error(r)
-        if (!session.state.value.signedIn || !isOwnPage(r.html)) return notSignedIn()
+        val user = ownUser(r.html)
+        if (!session.state.value.signedIn || user == null) return notSignedIn()
         val a = WorkActionsParser.parse(r.html, r.finalUrl)
         if (WorkActionsParser.workId(a)?.let { it != workId } == true) return failed("not this work's page")
-        return Loaded.Ok(putWork(workId, a, url))
+        return putWork(workId, a, url, user)?.let { Loaded.Ok(it) } ?: notSignedIn()
     }
 
     /** Stores [a] under the list's [key] (whatever [url] it was fetched from). */
     private suspend fun fetchList(key: String, url: HttpUrl): Loaded<ListActions> {
         val r = session.authedGet(url)
         if (r !is FetchResult.Ok) return Loaded.Error(r)
-        if (!session.state.value.signedIn || !isOwnPage(r.html)) return notSignedIn()
+        val user = ownUser(r.html)
+        if (!session.state.value.signedIn || user == null) return notSignedIn()
         val l = WorkActionsParser.parseList(r.html, r.finalUrl)
         if (l.subscribe == null) return failed("subscribe form not found")
-        lists.put(key, l, url)
+        if (!asAccount(user) { lists.put(key, l, url) }) return notSignedIn()
         return Loaded.Ok(l)
     }
 
-    /** Stores [a], keeping a confirmed kudos; returns what was stored. */
-    private fun putWork(workId: Long, a: WorkActions, pageUrl: HttpUrl): WorkActions {
-        if (a.kudosGiven) kudosed += workId
-        val v = if (!a.kudosGiven && workId in kudosed) a.copy(kudosGiven = true) else a
-        works.put(workId, v, pageUrl)
-        return v
+    /** Stores [a] (a page of [user]), keeping a confirmed kudos; returns what was stored, null when [user] no longer acts. */
+    private fun putWork(workId: Long, a: WorkActions, pageUrl: HttpUrl, user: String): WorkActions? {
+        var stored: WorkActions? = null
+        asAccount(user) {
+            if (a.kudosGiven) kudosed += workId
+            val v = if (!a.kudosGiven && workId in kudosed) a.copy(kudosGiven = true) else a
+            works.put(workId, v, pageUrl)
+            stored = v
+        }
+        return stored
     }
 
     private suspend fun bookmarkFormFor(a: WorkActions): Ao3Form? {
@@ -449,11 +463,22 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
         return WorkActionsParser.bookmarkForm(r.html, r.finalUrl)?.takeIf(::isEditForm)
     }
 
-    /** Signed in as the acting account (a page of another account is never used). */
-    private fun isOwnPage(html: String): Boolean {
+    /** The page's account, lower-cased, when it is signed in as the acting account; else null (never used). */
+    private fun ownUser(html: String): String? {
         val s = AccountParser.state(html)
-        val me = session.actingAccount.value ?: return false
-        return s.signedIn && s.username.equals(me, ignoreCase = true)
+        val me = session.actingAccount.value ?: return null
+        return if (s.signedIn && s.username.equals(me, ignoreCase = true)) me.lowercase() else null
+    }
+
+    /**
+     * Runs [write] only while [user] (lower-cased) is still the acting account, atomically with [syncAccount]:
+     * a call that started under one account never writes into another's state. True when it ran.
+     */
+    @Synchronized private fun asAccount(user: String?, write: () -> Unit): Boolean {
+        syncAccount()
+        if (user == null || user != account) return false
+        write()
+        return true
     }
 
     /** Drops all state when the acting account changed since it was gathered. */

@@ -16,6 +16,7 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.Jsoup
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -25,6 +26,8 @@ private const val ROBOT_HINT = "may be a robot"
 private const val DEFAULT_RETRY_AFTER_SEC = 60L
 /** Longer waits are returned to the caller instead of sleeping while every other request queues behind us. */
 private const val MAX_RETRY_WAIT_SEC = 30L
+/** Whole-call limit for a POST (connect, send, wait, read). */
+internal const val POST_CALL_TIMEOUT_SEC = 60L
 private val ANONYMOUS_CACHE_CONTROL = CacheControl.Builder().noCache().noStore().build()
 
 class Ao3Fetcher(
@@ -38,9 +41,13 @@ class Ao3Fetcher(
     private val mutex = Mutex()
     /**
      * POSTs never retry at the transport level: OkHttp's retryOnConnectionFailure would resend a form whose
-     * first copy may already have reached AO3. GETs keep [client] as given.
+     * first copy may already have reached AO3. A whole-call timeout bounds how long a caller holding the
+     * result non-cancellably can wait. GETs keep [client] as given.
      */
-    private val postClient: OkHttpClient = client.newBuilder().retryOnConnectionFailure(false).build()
+    internal val postClient: OkHttpClient = client.newBuilder()
+        .retryOnConnectionFailure(false)
+        .callTimeout(POST_CALL_TIMEOUT_SEC, TimeUnit.SECONDS)
+        .build()
     private var lastStart: Long? = null
 
     private class Raw(val code: Int, val headers: Headers, val body: String, val finalUrl: HttpUrl)
