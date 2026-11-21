@@ -10,6 +10,7 @@ import app.ao3reader.data.db.DownloadJob
 import app.ao3reader.data.db.SourceKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -17,6 +18,9 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 const val STORED_FORMAT_VERSION = 1
+
+private const val COUNT_MARKER = ".count"
+private fun markerValue(row: DownloadEntity) = "${row.chaptersStored},${row.downloadedAt}"
 
 /**
  * Downloaded works on disk: `{root}/{workId}/{index}.json`, one file per chapter, plus rows in Room.
@@ -59,15 +63,28 @@ class DownloadStore(
         dao.delete(workId)
     }
 
-    /** Removes leftover `*.tmp` and `*.old` dirs; call once at app start. */
-    suspend fun cleanUp() = withContext(io) {
-        root.listFiles()?.forEach { f ->
-            when {
-                f.name.endsWith(".tmp") -> f.deleteRecursively()
-                f.name.endsWith(".old") -> {
-                    val live = File(root, f.name.removeSuffix(".old"))
-                    // Died between the two renames: the old copy is the only one left, so put it back.
-                    if (live.exists()) f.deleteRecursively() else f.renameTo(live)
+    /**
+     * Removes leftover `*.tmp` and `*.old` dirs; call once at app start. A crash mid-swap is resolved from the
+     * `.count` marker (chapter count, downloadedAt) that commit leaves in the new dir until the rows are written.
+     */
+    suspend fun cleanUp() {
+        val names = withContext(io) { root.listFiles()?.map { it.name } ?: emptyList() }
+        withContext(io) { names.filter { it.endsWith(".tmp") }.forEach { File(root, it).deleteRecursively() } }
+        val ids = names.mapNotNull { it.removeSuffix(".old").toLongOrNull() }.toSet()
+        for (id in ids) {
+            val row = dao.get(id)
+            withContext(io) {
+                val live = dir(id); val o = old(id)
+                val marker = File(live, COUNT_MARKER)
+                // The marker survives only if the rows were never written for this copy.
+                val unCommitted = marker.isFile && (row == null || !row.hasCopy || marker.readText().trim() != markerValue(row))
+                when {
+                    unCommitted -> {
+                        live.deleteRecursively()
+                        if (o.exists()) o.renameTo(live)
+                    }
+                    live.exists() -> { o.deleteRecursively(); marker.delete() }
+                    o.exists() -> o.renameTo(live)
                 }
             }
         }
@@ -112,25 +129,28 @@ class DownloadWriter internal constructor(
             requestedAt = existing?.requestedAt ?: now,
         )
         val rows = chapters.mapIndexed { i, c -> DownloadChapterEntity(workId, i, c.chapterId, c.number, c.title) }
-        withContext(io) {
+        // Once started the swap always finishes: WorkManager may cancel the worker mid-commit.
+        withContext(NonCancellable + io) {
+            // A lone .old is the only good copy left by an earlier crash.
+            if (oldDir.exists() && !liveDir.exists()) oldDir.renameTo(liveDir)
+            File(tmpDir, COUNT_MARKER).writeText(markerValue(entity))
             oldDir.deleteRecursively()
             if (liveDir.exists() && !liveDir.renameTo(oldDir)) error("Could not move the old copy aside")
             if (!tmpDir.renameTo(liveDir)) {
                 if (oldDir.exists()) oldDir.renameTo(liveDir)
                 error("Could not move the new copy into place")
             }
-        }
-        try {
-            dao.replaceCopy(entity, rows)
-        } catch (e: Throwable) {
-            // Rows are unchanged, so put the old files back to keep rows and files consistent.
-            withContext(io) {
+            try {
+                dao.replaceCopy(entity, rows)
+            } catch (e: Throwable) {
+                // Rows are unchanged, so put the old files back to keep rows and files consistent.
                 liveDir.deleteRecursively()
                 if (oldDir.exists()) oldDir.renameTo(liveDir)
+                throw e
             }
-            throw e
+            File(liveDir, COUNT_MARKER).delete()
+            oldDir.deleteRecursively()
         }
-        withContext(io) { oldDir.deleteRecursively() }
     }
 
     fun abort() {
