@@ -52,7 +52,7 @@ class Ao3Fetcher(
 
     private class Raw(val code: Int, val headers: Headers, val body: String, val finalUrl: HttpUrl)
 
-    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean): FetchResult =
+    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean, forceNetwork: Boolean): FetchResult =
         fetch(url, interactive = interactive, resendAfterSolve = true, http = client) {
             Request.Builder().url(url).headers(accept).apply {
                 if (anonymous) {
@@ -61,6 +61,8 @@ class Ao3Fetcher(
                     // a cached signed-in response (and its Set-Cookie) must never serve an anonymous request,
                     // nor an anonymous one be stored for a signed-in request.
                     cacheControl(ANONYMOUS_CACHE_CONTROL)
+                } else if (forceNetwork) {
+                    cacheControl(CacheControl.FORCE_NETWORK)
                 }
             }.build()
         }

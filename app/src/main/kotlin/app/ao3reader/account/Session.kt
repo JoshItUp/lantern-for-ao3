@@ -199,9 +199,10 @@ class Session(
      * Signed-in GET. On a page showing the signed-out header (while credentials are stored) it re-logs in
      * once and retries once. If the re-login fails, the original response is returned and [state] is signed
      * out. [interactive] false (background work) also keeps the re-login from showing the challenge solver.
+     * [forceNetwork] true never answers from the HTTP cache ([Fetcher.get]).
      */
-    suspend fun authedGet(url: HttpUrl, accept: String? = null, interactive: Boolean = true): FetchResult =
-        authed(interactive, isPost = false) { fetcher.get(url, accept, interactive) }
+    suspend fun authedGet(url: HttpUrl, accept: String? = null, interactive: Boolean = true, forceNetwork: Boolean = false): FetchResult =
+        authed(interactive, isPost = false) { fetcher.get(url, accept, interactive, forceNetwork = forceNetwork) }
 
     /**
      * Posts [form] with [overrides] applied: every field named in [overrides] is replaced (at the position

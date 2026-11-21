@@ -21,8 +21,8 @@ interface PageDump {
  * user's credentials, tokens or account details.
  */
 class DumpingFetcher(private val delegate: Fetcher, private val dump: PageDump) : Fetcher {
-    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean): FetchResult {
-        val result = delegate.get(url, accept, interactive, anonymous)
+    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean, forceNetwork: Boolean): FetchResult {
+        val result = delegate.get(url, accept, interactive, anonymous, forceNetwork)
         if (result is FetchResult.Ok && dump !== PageDump.None && !isLogin(url) && !isLogin(result.finalUrl)) {
             withContext(Dispatchers.IO) {
                 try { dump.dump(result.finalUrl, result.html) } catch (_: Exception) { }

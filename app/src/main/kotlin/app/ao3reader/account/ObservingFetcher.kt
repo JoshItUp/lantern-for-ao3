@@ -12,8 +12,8 @@ import okhttp3.HttpUrl
  * XHR requests ([accept] set: JSON, no page header) and POSTs (Session reads its own responses).
  */
 class ObservingFetcher(private val delegate: Fetcher, private val onOk: (String) -> Unit) : Fetcher {
-    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean): FetchResult {
-        val result = delegate.get(url, accept, interactive, anonymous)
+    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean, forceNetwork: Boolean): FetchResult {
+        val result = delegate.get(url, accept, interactive, anonymous, forceNetwork)
         if (result is FetchResult.Ok && !anonymous && accept == null) {
             withContext(Dispatchers.Default) {
                 try { onOk(result.html) } catch (_: Exception) { }

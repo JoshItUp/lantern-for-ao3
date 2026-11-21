@@ -5,6 +5,9 @@ import java.io.File
 /**
  * Bounded LRU disk cache of raw chapter HTML at `dir/{workId}/{chapterKey}.html`.
  * Recency is the file's lastModified, set from [clock]. Blocking and thread-safe.
+ *
+ * Content cache only: never read forms or tokens from here (a cached signed-in page holds an old
+ * authenticity token and another moment's account state). Cleared on an explicit sign-out.
  */
 class ChapterCache(
     private val dir: File,
@@ -48,6 +51,11 @@ class ChapterCache(
             f.setLastModified(clock())
             trim()
         }
+    }
+
+    /** Deletes every cached chapter (explicit sign-out: cached signed-in pages belong to that account). */
+    fun clear() {
+        synchronized(lock) { dir.listFiles()?.forEach { it.deleteRecursively() } }
     }
 
     fun remove(workId: Long, chapterKey: String) {

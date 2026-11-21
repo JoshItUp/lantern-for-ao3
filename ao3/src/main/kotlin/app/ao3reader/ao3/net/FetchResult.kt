@@ -33,12 +33,16 @@ interface Fetcher {
      *
      * [anonymous] true tags the request with [Anonymous]: the app's network interceptor then sends it
      * without the AO3 session cookies and drops any session cookie the response tries to set.
+     *
+     * [forceNetwork] true never answers from the HTTP cache: the request reaches AO3 (a signed-in chapter
+     * load must, so it is recorded in the owner's AO3 History). Anonymous requests always bypass the cache.
      */
     suspend fun get(
         url: HttpUrl,
         accept: String? = null,
         interactive: Boolean = true,
         anonymous: Boolean = false,
+        forceNetwork: Boolean = false,
     ): FetchResult
 
     /**

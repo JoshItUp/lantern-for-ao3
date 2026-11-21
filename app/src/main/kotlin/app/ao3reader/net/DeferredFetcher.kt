@@ -16,8 +16,8 @@ class DeferredFetcher(create: () -> Fetcher) : Fetcher {
     private suspend fun delegate(): Fetcher =
         if (delegate.isInitialized()) delegate.value else withContext(Dispatchers.IO) { delegate.value }
 
-    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean): FetchResult =
-        delegate().get(url, accept, interactive, anonymous)
+    override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean, forceNetwork: Boolean): FetchResult =
+        delegate().get(url, accept, interactive, anonymous, forceNetwork)
 
     override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?, interactive: Boolean): FetchResult =
         delegate().post(url, fields, accept, interactive)

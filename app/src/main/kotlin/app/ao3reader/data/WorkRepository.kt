@@ -33,7 +33,8 @@ class NotAChapterPageException : IllegalStateException("not a chapter page")
 interface AuthedFetch {
     /** True while an account acts: chapter loads then go signed in and count as AO3 History visits. */
     fun isActing(): Boolean
-    suspend fun get(url: HttpUrl, interactive: Boolean): FetchResult
+    /** [forceNetwork]: never served from the HTTP cache (a History visit must reach AO3). */
+    suspend fun get(url: HttpUrl, interactive: Boolean, forceNetwork: Boolean = false): FetchResult
 }
 
 /** Receives every signed-in chapter page, so the reader actions have fresh forms ([ActionRepository.update]). */
@@ -102,7 +103,8 @@ class WorkRepository(
         val url = Ao3Urls.chapter(workId, ref.chapterId)
         // Signed in, this fetch is the visit (and loads registered-users-only works).
         if (signedIn != null) lastVisit[flightKey(workId, key)] = clock()
-        val r = signedIn?.get(url, interactive = true) ?: fetcher.get(url)
+        // forceNetwork: an HTTP-cached copy would show the chapter but record no visit.
+        val r = signedIn?.get(url, interactive = true, forceNetwork = true) ?: fetcher.get(url)
         if (r !is FetchResult.Ok) return Loaded.Error(r)
         val parsed = parseValid(r.html, workId)
             ?: return Loaded.Error(FetchResult.Failed(NotAChapterPageException()))
@@ -129,7 +131,7 @@ class WorkRepository(
         }
         scope.launch {
             try {
-                val r = signedIn.get(Ao3Urls.chapter(workId, ref.chapterId), interactive = false)
+                val r = signedIn.get(Ao3Urls.chapter(workId, ref.chapterId), interactive = false, forceNetwork = true)
                 if (r !is FetchResult.Ok) return@launch
                 if (!withContext(parseDispatcher) { ChapterParser.looksLikeChapterPage(r.html) }) return@launch
                 feedActions(workId, r)

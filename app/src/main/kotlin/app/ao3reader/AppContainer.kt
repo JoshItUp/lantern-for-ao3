@@ -99,7 +99,8 @@ class AppContainer(val context: Context) {
             fetcher, chapterCache, appScope,
             authed = object : AuthedFetch {
                 override fun isActing() = session.actingAccount.value != null
-                override suspend fun get(url: HttpUrl, interactive: Boolean) = session.authedGet(url, interactive = interactive)
+                override suspend fun get(url: HttpUrl, interactive: Boolean, forceNetwork: Boolean) =
+                    session.authedGet(url, interactive = interactive, forceNetwork = forceNetwork)
             },
             actions = { workId, html, pageUrl -> actionRepo.update(workId, html, pageUrl) },
         )
