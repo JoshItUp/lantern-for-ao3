@@ -44,9 +44,15 @@ fun DownloadRepository.asDownloadsSource(): DownloadsSource {
     }
 }
 
-/** One saved work. [blurb] is null for a row without a copy (first download queued or failed). */
+/**
+ * One saved work. [blurb] is null for a row without a copy (first download queued or failed), or one whose
+ * stored blurb can't be decoded.
+ */
 @Immutable
 data class DownloadRow(val entity: DownloadEntity, val blurb: WorkBlurb?, val summary: List<Block>) {
+    /** Has a readable copy: tapping opens the reader, even when [blurb] is null. */
+    val openable: Boolean get() = entity.hasCopy
+
     /** A job is running: Update and Delete are not offered (a delete would race the commit). */
     val busy: Boolean get() = entity.job == DownloadJob.QUEUED || entity.job == DownloadJob.DOWNLOADING
 }

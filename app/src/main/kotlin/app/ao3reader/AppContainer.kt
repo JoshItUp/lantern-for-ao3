@@ -1,6 +1,7 @@
 package app.ao3reader
 
 import android.content.Context
+import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import androidx.webkit.WebViewCompat
@@ -182,6 +183,13 @@ class AppContainer(val context: Context) {
     init {
         // Before the worker or any queue call runs: clear leftover temp dirs and fail rows a dead process left.
         // A failed clean-up must not crash the app; [DownloadRepository.ready] completes either way.
-        appScope.launch { runCatching { downloadRepo.startup() } }
+        appScope.launch {
+            runCatching { downloadRepo.startup() }
+                .onFailure { e -> Log.w(TAG, "download startup failed: ${e::class.java.simpleName}") }
+        }
+    }
+
+    private companion object {
+        const val TAG = "AppContainer"
     }
 }

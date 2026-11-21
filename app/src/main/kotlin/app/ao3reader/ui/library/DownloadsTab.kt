@@ -1,6 +1,7 @@
 package app.ao3reader.ui.library
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -104,7 +105,7 @@ fun DownloadsTab(
                     work = blurb,
                     summary = row.summary,
                     badge = badgeText(p?.chapterNumber, id in readMarks, downloaded = false),
-                    onClick = { if (row.entity.hasCopy) onOpenWork(id) },
+                    onClick = { if (row.openable) onOpenWork(id) },
                     onLongClick = { if (!row.busy) menu = true },
                     extras = {
                         DownloadExtras(
@@ -116,7 +117,10 @@ fun DownloadsTab(
                     },
                 )
             } else {
-                PendingRow(row, menu, confirming, { menu = it }, { onUpdate(id) }, { onAskDelete(id) }, onConfirmDelete, onCancelDelete)
+                PendingRow(
+                    row, menu, confirming, { menu = it }, { onUpdate(id) }, { onAskDelete(id) }, onConfirmDelete, onCancelDelete,
+                    onOpen = if (row.openable) ({ onOpenWork(id) }) else null,
+                )
             }
         }
     }
@@ -164,7 +168,7 @@ private fun ColumnScope.DownloadExtras(
     if (confirming) ConfirmDelete(onConfirmDelete, onCancelDelete)
 }
 
-/** A row with no copy yet: title, authors and state. Not tappable. */
+/** A row with no copy yet (or a copy whose blurb can't be read): title, authors and state. Tappable only with a copy ([onOpen]). */
 @Composable
 private fun PendingRow(
     row: DownloadRow,
@@ -175,6 +179,7 @@ private fun PendingRow(
     onAskDelete: () -> Unit,
     onConfirmDelete: () -> Unit,
     onCancelDelete: () -> Unit,
+    onOpen: (() -> Unit)?,
 ) {
     val e = row.entity
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
@@ -182,6 +187,7 @@ private fun PendingRow(
         Modifier
             .fillMaxWidth()
             .clip(RowShape)
+            .then(if (onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier)
             .background(MaterialTheme.colorScheme.surface)
             .padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {

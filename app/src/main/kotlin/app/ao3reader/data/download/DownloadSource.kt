@@ -22,10 +22,10 @@ sealed interface SourceResult {
     data class Failed(val reason: DownloadFailure, val result: FetchResult?) : SourceResult
 }
 
-enum class DownloadFailure(val permanent: Boolean, val message: String) {
-    SIGN_IN_REQUIRED(true, "Sign in to download this work"),
-    NOT_FOUND(true, "This work no longer exists on AO3."),
-    UNREADABLE(true, "Couldn't read this work's page."),
-    BLOCKED(false, "AO3 asked for a check. Open the app and tap Retry."),
-    NETWORK(false, "Couldn't reach AO3. Tap Retry."),
+enum class DownloadFailure(val message: String) {
+    SIGN_IN_REQUIRED("Sign in to download this work"),
+    NOT_FOUND("This work no longer exists on AO3."),
+    UNREADABLE("Couldn't read this work's page."),
+    BLOCKED("AO3 asked for a check. Tap Retry."),
+    NETWORK("Couldn't reach AO3. Tap Retry."),
 }

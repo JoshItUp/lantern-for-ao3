@@ -26,6 +26,8 @@ import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -58,6 +60,16 @@ fun badgeText(chapterNumber: Int?, read: Boolean, downloaded: Boolean): String? 
         else -> "$reading · ⤓"
     }
 }
+
+/** What a screen reader says for a [badgeText]: "✓ Ch 4 · ⤓" reads "Chapter 4 · Downloaded". */
+fun badgeLabel(badge: String): String =
+    badge.split(" · ").joinToString(" · ") { part ->
+        when {
+            part == "⤓" -> "Downloaded"
+            part.startsWith("✓ Ch ") -> "Chapter " + part.removePrefix("✓ Ch ")
+            else -> part
+        }
+    }
 
 private fun fmt(n: Int): String = "%,d".format(n)
 
@@ -227,6 +239,7 @@ private fun Badge(text: String, modifier: Modifier = Modifier) {
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onPrimaryContainer,
         modifier = modifier
+            .semantics { contentDescription = badgeLabel(text) }
             .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(8.dp))
             .padding(horizontal = 8.dp, vertical = 3.dp),
     )

@@ -130,7 +130,7 @@ class WorkRepository(
      * A background signed-in GET of a chapter shown without a fetch (from the cache or a download), so it
      * appears in the owner's AO3 History. Its page feeds [actions], goes to [onPage] and [onChapterPage], and
      * refreshes the chapter-cache entry; the reader is not re-rendered. Nothing while no account acts.
-     * At most one per chapter within [VISIT_DEBOUNCE_MS].
+     * At most one per chapter within [VISIT_DEBOUNCE_MS]; a visit that fails (not Ok, or throws) frees its slot.
      */
     fun visitInBackground(workId: Long, ref: ChapterRef, onPage: (html: String) -> Unit = {}) {
         val signedIn = authed?.takeIf { it.isActing() } ?: return
@@ -147,7 +147,8 @@ class WorkRepository(
         scope.launch {
             try {
                 val r = signedIn.get(Ao3Urls.chapter(workId, ref.chapterId), interactive = false, forceNetwork = true)
-                if (r !is FetchResult.Ok) return@launch
+                // No visit recorded: free the slot so the next open of this chapter tries again.
+                if (r !is FetchResult.Ok) { lastVisit.remove(fk, now); return@launch }
                 if (!withContext(parseDispatcher) { ChapterParser.looksLikeChapterPage(r.html) }) return@launch
                 feedActions(workId, r)
                 if (parseValid(r.html, workId) != null) {
@@ -158,6 +159,7 @@ class WorkRepository(
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
+                lastVisit.remove(fk, now)
             }
         }
     }

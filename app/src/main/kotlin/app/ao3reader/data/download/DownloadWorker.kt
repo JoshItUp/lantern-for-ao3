@@ -54,9 +54,19 @@ class DownloadWorker(
             try {
                 deps.run(row.workId, deps.isForeground())
             } catch (e: CancellationException) {
-                // Stopped by WorkManager mid-download: queue it again so the next run picks it up.
+                // Stopped by WorkManager mid-download: queue it again so the next run picks it up
+                // (not if it already finished: the requeue is conditional on DOWNLOADING).
                 withContext(NonCancellable) { deps.repo.requeue(row.workId) }
                 throw e
+            } catch (e: Throwable) {
+                // The run threw instead of finishing the row: fail it and go on to the next one.
+                try {
+                    deps.repo.markFailed(row.workId)
+                } catch (c: CancellationException) {
+                    throw c
+                } catch (_: Throwable) {
+                    break // The row can't be updated; stop rather than pick it again forever.
+                }
             }
         }
         return Result.success()

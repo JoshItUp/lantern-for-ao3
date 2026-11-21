@@ -21,12 +21,14 @@ class DownloadRepository(
 
     /**
      * Call once per process before anything else: clears leftover temp dirs, and fails rows a dead process
-     * left mid-download (no automatic retry). [DownloadStore.cleanUp] must not run alongside a commit.
+     * left mid-download (no automatic retry). Rows still QUEUED (requested, never started) get a worker run, so
+     * they never wait for an unrelated request. [DownloadStore.cleanUp] must not run alongside a commit.
      */
     suspend fun startup() {
         try {
             store.cleanUp()
             dao.failDownloading(DownloadFailure.NETWORK.message)
+            if (dao.nextQueued() != null) enqueue()
         } finally {
             readyJob.complete()
         }
@@ -70,6 +72,9 @@ class DownloadRepository(
     /** The oldest queued row, for the worker. */
     internal suspend fun nextQueued(): DownloadEntity? = dao.nextQueued()
 
-    /** Puts a row the worker was stopped in the middle of back in the queue. */
-    internal suspend fun requeue(workId: Long) = dao.setJob(workId, DownloadJob.QUEUED, null)
+    /** Puts a row the worker was stopped in the middle of back in the queue (only if it is still DOWNLOADING). */
+    internal suspend fun requeue(workId: Long) = dao.requeueIfDownloading(workId)
+
+    /** Fails a row whose run threw instead of finishing it. */
+    internal suspend fun markFailed(workId: Long) = dao.setJob(workId, DownloadJob.FAILED, DownloadFailure.NETWORK.message)
 }

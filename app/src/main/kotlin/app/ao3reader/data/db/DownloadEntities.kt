@@ -55,6 +55,10 @@ interface DownloadDao {
     @Query("UPDATE DownloadEntity SET job = :job, failure = :failure WHERE workId = :workId")
     suspend fun setJob(workId: Long, job: DownloadJob, failure: String?)
 
+    /** Back to QUEUED only if still DOWNLOADING: a row already committed or failed is left alone. */
+    @Query("UPDATE DownloadEntity SET job = 'QUEUED', failure = NULL WHERE workId = :workId AND job = 'DOWNLOADING'")
+    suspend fun requeueIfDownloading(workId: Long)
+
     /** Rows a dead process left mid-download. */
     @Query("UPDATE DownloadEntity SET job = 'FAILED', failure = :failure WHERE job = 'DOWNLOADING'")
     suspend fun failDownloading(failure: String)
