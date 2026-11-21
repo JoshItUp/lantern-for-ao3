@@ -77,6 +77,11 @@ private fun LibrarySection.label() = when (this) {
     LibrarySection.SUBSCRIPTIONS -> "Subscriptions"
 }
 
+private fun LibraryTab.label() = when (this) {
+    is LibraryTab.Ao3 -> section.label()
+    LibraryTab.Downloads -> "Downloads"
+}
+
 private fun LibrarySection.emptyText() = when (this) {
     LibrarySection.HISTORY -> "No reading history yet."
     LibrarySection.MARKED_FOR_LATER -> "Nothing marked for later."
@@ -88,6 +93,7 @@ private fun LibrarySection.emptyText() = when (this) {
 @Composable
 fun LibraryScreen(
     vm: LibraryViewModel,
+    downloadsVm: DownloadsViewModel,
     /** The bottom bar overlays this screen; the list pads by it (constant, so nothing relayouts). */
     bottomBarHeight: Dp,
     onAccount: () -> Unit,
@@ -95,10 +101,15 @@ fun LibraryScreen(
     onOpenWorkList: OpenWorkList,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val downloads by downloadsVm.state.collectAsStateWithLifecycle()
     // One list state per tab, saved with the screen: switching tabs (or coming back from the reader)
     // returns to where each list was left.
-    val listStates = LibrarySection.entries.map { rememberLazyListState() }
+    val listStates = LIBRARY_TABS.map { rememberLazyListState() }
     val scope = rememberCoroutineScope()
+    val openWork: (Long) -> Unit = { workId ->
+        val p = state.progressByWork[workId]
+        onOpenWork(workId, p?.chapterId, p?.chapterNumber ?: 1)
+    }
 
     Column(
         Modifier
@@ -107,75 +118,85 @@ fun LibraryScreen(
             .background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility),
     ) {
-        if (!state.signedIn) {
-            SignInPrompt(bottomBarHeight, onAccount)
-            return@Column
-        }
         val selected = state.selected
-        val section = state.sections.getValue(selected)
-        Tabs(selected) { tapped ->
-            if (tapped == selected) {
+        val selectedIndex = LIBRARY_TABS.indexOf(selected)
+        // The tab row always shows; signed out, the AO3 tabs show the sign-in prompt in their own area.
+        Tabs(selectedIndex) { tapped ->
+            if (tapped == selectedIndex) {
                 // Tapping the shown tab again: back to the top (jump when far, like Search).
-                val ls = listStates[tapped.ordinal]
+                val ls = listStates[tapped]
                 scope.launch { if (ls.firstVisibleItemIndex > 10) ls.scrollToItem(0) else ls.animateScrollToItem(0) }
             } else {
-                vm.select(tapped)
+                vm.select(LIBRARY_TABS[tapped])
             }
         }
+        val section = (selected as? LibraryTab.Ao3)?.let { state.sections.getValue(it.section) }
         // Fixed 2 dp slot: the list never shifts when the bar appears.
         Box(Modifier.fillMaxWidth().height(2.dp)) {
-            if (section.refreshing && !section.pulled && !section.isEmpty) {
+            if (state.signedIn && section != null && section.refreshing && !section.pulled && !section.isEmpty) {
                 LinearProgressIndicator(Modifier.fillMaxSize(), trackColor = MaterialTheme.colorScheme.background)
             }
         }
         key(selected) {
-            SectionList(
-                section = selected,
-                s = section,
-                listState = listStates[selected.ordinal],
-                state = state,
-                bottomBarHeight = bottomBarHeight,
-                onRefresh = { vm.refresh(selected) },
-                onNextPage = { vm.loadNextPage(selected) },
-                onRetry = { vm.retry(selected) },
-                onOpenWork = { workId ->
-                    val p = state.progressByWork[workId]
-                    onOpenWork(workId, p?.chapterId, p?.chapterNumber ?: 1)
-                },
-                onOpenWorkList = onOpenWorkList,
-            )
+            when {
+                selected is LibraryTab.Downloads -> DownloadsTab(
+                    s = downloads,
+                    listState = listStates[selectedIndex],
+                    progressByWork = state.progressByWork,
+                    readMarks = state.readMarks,
+                    bottomBarHeight = bottomBarHeight,
+                    onOpenWork = openWork,
+                    onUpdate = downloadsVm::update,
+                    onAskDelete = downloadsVm::askDelete,
+                    onConfirmDelete = downloadsVm::confirmDelete,
+                    onCancelDelete = downloadsVm::cancelDelete,
+                )
+                selected is LibraryTab.Ao3 && !state.signedIn -> SignInPrompt(bottomBarHeight, onAccount)
+                selected is LibraryTab.Ao3 && section != null -> SectionList(
+                    section = selected.section,
+                    s = section,
+                    listState = listStates[selectedIndex],
+                    state = state,
+                    bottomBarHeight = bottomBarHeight,
+                    onRefresh = { vm.refresh(selected.section) },
+                    onNextPage = { vm.loadNextPage(selected.section) },
+                    onRetry = { vm.retry(selected.section) },
+                    onOpenWork = openWork,
+                    onOpenWorkList = onOpenWorkList,
+                )
+            }
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Tabs(selected: LibrarySection, onTap: (LibrarySection) -> Unit) {
+private fun Tabs(selected: Int, onTap: (Int) -> Unit) {
     SecondaryScrollableTabRow(
-        selectedTabIndex = selected.ordinal,
+        selectedTabIndex = selected,
         containerColor = MaterialTheme.colorScheme.background,
         contentColor = MaterialTheme.colorScheme.onBackground,
         edgePadding = 8.dp,
         indicator = {
             TabRowDefaults.SecondaryIndicator(
-                Modifier.tabIndicatorOffset(selected.ordinal, matchContentSize = false),
+                Modifier.tabIndicatorOffset(selected, matchContentSize = false),
                 color = MaterialTheme.colorScheme.primary,
             )
         },
         divider = { HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)) },
     ) {
-        for (sec in LibrarySection.entries) {
+        LIBRARY_TABS.forEachIndexed { i, tab ->
             Tab(
-                selected = sec == selected,
-                onClick = { onTap(sec) },
+                selected = i == selected,
+                onClick = { onTap(i) },
                 selectedContentColor = MaterialTheme.colorScheme.onBackground,
                 unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.height(44.dp),
                 text = {
                     Text(
-                        sec.label(),
+                        tab.label(),
                         style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (sec == selected) FontWeight.SemiBold else FontWeight.Medium,
+                        fontWeight = if (i == selected) FontWeight.SemiBold else FontWeight.Medium,
                     )
                 },
             )
@@ -261,7 +282,7 @@ private fun SectionList(
                     val url = row.url
                     SubscriptionRow(
                         row = row,
-                        badge = workId?.let { badgeText(p?.chapterNumber, it in state.readMarks) },
+                        badge = workId?.let { badgeText(p?.chapterNumber, it in state.readMarks, it in state.downloadedIds) },
                         onClick = when {
                             workId != null -> { { onOpenWork(workId) } }
                             url != null -> { { onOpenWorkList(url, row.listTitle) } }
@@ -276,7 +297,7 @@ private fun SectionList(
                     WorkCard(
                         work = w,
                         summary = s.summaries[w.workId].orEmpty(),
-                        badge = badgeText(progress?.chapterNumber, w.workId in state.readMarks),
+                        badge = badgeText(progress?.chapterNumber, w.workId in state.readMarks, w.workId in state.downloadedIds),
                         onClick = { onOpenWork(w.workId) },
                         links = s.links[w.workId],
                         onOpenWorkList = onOpenWorkList,
@@ -359,7 +380,7 @@ private fun SignInPrompt(bottomBarHeight: Dp, onAccount: () -> Unit) {
     }
 }
 
-/** Always retryable: with no account the sign-in prompt shows instead of any list. */
+/** Always retryable: with no account the sign-in prompt shows instead of the AO3 lists. */
 @Composable
 private fun ErrorRow(error: FetchResult, onRetry: () -> Unit) {
     Column(
@@ -384,7 +405,7 @@ private fun Loading() {
 }
 
 @Composable
-private fun Hint(text: String) {
+internal fun Hint(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.bodyMedium,

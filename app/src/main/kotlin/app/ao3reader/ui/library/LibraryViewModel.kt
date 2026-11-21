@@ -121,13 +121,25 @@ data class SectionState(
     val isEmpty: Boolean get() = works.isEmpty() && subs.isEmpty()
 }
 
+/** A Library tab: one of AO3's paged sections (signed in only), or the on-device downloads. */
+sealed interface LibraryTab {
+    data class Ao3(val section: LibrarySection) : LibraryTab
+    data object Downloads : LibraryTab
+}
+
+/** The tab row's order: the four AO3 sections, then Downloads last. */
+val LIBRARY_TABS: List<LibraryTab> = LibrarySection.entries.map { LibraryTab.Ao3(it) } + LibraryTab.Downloads
+
 @Immutable
 data class LibraryUiState(
     val signedIn: Boolean = false,
-    val selected: LibrarySection = LibrarySection.HISTORY,
+    val selected: LibraryTab = LibraryTab.Ao3(LibrarySection.HISTORY),
     val sections: Map<LibrarySection, SectionState> = FRESH,
+    /** Progress of shown and downloaded works. */
     val progressByWork: Map<Long, ProgressEntity> = emptyMap(),
     val readMarks: Set<Long> = emptySet(),
+    /** Works with a stored download (the card's "⤓"). */
+    val downloadedIds: Set<Long> = emptySet(),
 )
 
 private val FRESH: Map<LibrarySection, SectionState> = LibrarySection.entries.associateWith { SectionState() }
@@ -152,9 +164,10 @@ internal fun visitedLine(r: ReadingExtra?): String? {
 }
 
 /**
- * The four Library tabs. Each section keeps its own pages, so switching tabs is instant. A section
- * loads the first time it is shown: its cached page 1 first, then page 1 from AO3 once. Paging works
- * like Search: one request at a time per section, appended, deduped by work.
+ * The Library's tab selection and its four AO3 tabs (the Downloads list has its own [DownloadsViewModel]).
+ * Each section keeps its own pages, so switching tabs is instant. A section loads the first time it is
+ * shown: its cached page 1 first, then page 1 from AO3 once. Paging works like Search: one request at a
+ * time per section, appended, deduped by work.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class LibraryViewModel(
@@ -162,6 +175,7 @@ class LibraryViewModel(
     private val progressDao: ProgressDao,
     private val readMarkDao: ReadMarkDao,
     private val parseDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val downloadedIds: Flow<Set<Long>> = flowOf(emptySet()),
 ) : ViewModel() {
     private val _state = MutableStateFlow(LibraryUiState())
     val state: StateFlow<LibraryUiState> = _state.asStateFlow()
@@ -172,10 +186,19 @@ class LibraryViewModel(
     private val started = HashSet<LibrarySection>()
     /** The account whose lists are held; a lapse and return of the same account keeps them. */
     private var shownAccount: String? = null
+    /** The first account value picks the opening tab: Downloads when signed out. Later changes keep the tab. */
+    private var tabChosen = false
 
     init {
         viewModelScope.launch {
+            downloadedIds.distinctUntilChanged().collect { ids -> _state.update { it.copy(downloadedIds = ids) } }
+        }
+        viewModelScope.launch {
             source.account.distinctUntilChanged().collect { account ->
+                if (!tabChosen) {
+                    tabChosen = true
+                    if (account == null) _state.update { it.copy(selected = LibraryTab.Downloads) }
+                }
                 if (account != shownAccount) {
                     // Another account, or none (signed out, or stored credentials rejected): nothing
                     // shown or in flight belongs to it. Signing back in starts the tabs afresh.
@@ -184,7 +207,8 @@ class LibraryViewModel(
                     started.clear()
                     _state.update { it.copy(signedIn = account != null, sections = FRESH) }
                 }
-                if (account != null) ensureStarted(_state.value.selected)
+                val tab = _state.value.selected
+                if (account != null && tab is LibraryTab.Ao3) ensureStarted(tab.section)
             }
         }
         viewModelScope.launch {
@@ -207,12 +231,15 @@ class LibraryViewModel(
             sec.works.mapTo(ids) { it.workId }
             sec.subs.mapNotNullTo(ids) { it.workId }
         }
+        // The Downloads tab opens works at their reading position too.
+        ids += s.downloadedIds
         return ids.sorted()
     }
 
-    fun select(section: LibrarySection) {
-        _state.update { it.copy(selected = section) }
-        if (_state.value.signedIn) ensureStarted(section)
+    fun select(tab: LibraryTab) {
+        tabChosen = true
+        _state.update { it.copy(selected = tab) }
+        if (_state.value.signedIn && tab is LibraryTab.Ao3) ensureStarted(tab.section)
     }
 
     /** Page 1 again (pull-to-refresh); shown content stays until it arrives. */
@@ -393,6 +420,7 @@ class LibraryViewModel(
                     container.libraryRepo.asLibrarySource(container.session),
                     container.db.progressDao(),
                     container.db.readMarkDao(),
+                    downloadedIds = container.downloadRepo.downloadedIds(),
                 )
             }
         }

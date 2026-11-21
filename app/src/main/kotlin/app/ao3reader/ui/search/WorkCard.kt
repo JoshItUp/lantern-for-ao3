@@ -1,7 +1,9 @@
 package app.ao3reader.ui.search
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -40,11 +42,21 @@ private val TagShape = RoundedCornerShape(6.dp)
 private val TagBackground = Color.White.copy(alpha = 0.07f)
 private val WarningColor = Color(0xFFE8A27C)
 
-/** What the card's corner badge says: reading progress wins over an AO3 history mark. */
-fun badgeText(progressChapter: Int?, readMark: Boolean): String? = when {
-    progressChapter != null -> "✓ Ch $progressChapter"
-    readMark -> "Read"
-    else -> null
+/**
+ * What the card's corner badge says: reading progress wins over an AO3 history mark; a downloaded work
+ * adds "⤓".
+ */
+fun badgeText(chapterNumber: Int?, read: Boolean, downloaded: Boolean): String? {
+    val reading = when {
+        chapterNumber != null -> "✓ Ch $chapterNumber"
+        read -> "Read"
+        else -> null
+    }
+    return when {
+        !downloaded -> reading
+        reading == null -> "⤓"
+        else -> "$reading · ⤓"
+    }
 }
 
 private fun fmt(n: Int): String = "%,d".format(n)
@@ -53,6 +65,7 @@ private fun fmt(n: Int): String = "%,d".format(n)
 fun chaptersText(posted: Int?, total: Int?): String? =
     posted?.let { "$it/${total ?: "?"}" }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WorkCard(
     work: WorkBlurb,
@@ -65,6 +78,8 @@ fun WorkCard(
     /** Author and series links (built in the VM); with [onOpenWorkList] they are tappable on their own. */
     links: CardLinks? = null,
     onOpenWorkList: OpenWorkList? = null,
+    /** Long-press (Downloads: the card's menu). */
+    onLongClick: (() -> Unit)? = null,
 ) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val meta = remember(work) {
@@ -93,7 +108,10 @@ fun WorkCard(
     Surface(
         color = MaterialTheme.colorScheme.surface,
         shape = CardShape,
-        modifier = modifier.fillMaxWidth().clip(CardShape).clickable(onClick = onClick),
+        modifier = modifier.fillMaxWidth().clip(CardShape).then(
+            if (onLongClick != null) Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            else Modifier.clickable(onClick = onClick),
+        ),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.Top) {

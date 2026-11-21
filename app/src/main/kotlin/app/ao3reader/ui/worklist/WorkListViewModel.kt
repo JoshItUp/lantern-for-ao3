@@ -68,6 +68,8 @@ data class WorkListUiState(
     val loaded: Boolean = false,
     val progressByWork: Map<Long, ProgressEntity> = emptyMap(),
     val readMarks: Set<Long> = emptySet(),
+    /** Works with a stored download (the card's "⤓"). */
+    val downloadedIds: Set<Long> = emptySet(),
 )
 
 /** The header's Subscribe / Unsubscribe button for a series or author. */
@@ -96,6 +98,7 @@ class WorkListViewModel(
     private val parseDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val listActions: ListActionSource? = null,
     private val runner: ActionRunner? = null,
+    private val downloadedIds: Flow<Set<Long>> = flowOf(emptySet()),
 ) : ViewModel() {
     private val url: HttpUrl? = Ao3Urls.workListOrNull(rawUrl)
     private val _state = MutableStateFlow(WorkListUiState(title = title, invalid = url == null))
@@ -164,6 +167,9 @@ class WorkListViewModel(
     }
 
     init {
+        viewModelScope.launch {
+            downloadedIds.distinctUntilChanged().collect { ids -> _state.update { it.copy(downloadedIds = ids) } }
+        }
         viewModelScope.launch {
             _state.map { s -> s.works.map { it.workId } }
                 .distinctUntilChanged()
@@ -254,6 +260,7 @@ class WorkListViewModel(
                     rawUrl, title, container.workListRepo,
                     container.db.progressDao(), container.db.readMarkDao(),
                     listActions = container.actionRepo, runner = container.actionRunner,
+                    downloadedIds = container.downloadRepo.downloadedIds(),
                 )
             }
         }
