@@ -12,6 +12,7 @@ import app.ao3reader.ao3.net.Ao3Fetcher
 import app.ao3reader.ao3.net.Fetcher
 import androidx.room.Room
 import app.ao3reader.data.ActionRepository
+import app.ao3reader.data.ActionRunner
 import app.ao3reader.data.AuthedFetch
 import app.ao3reader.data.ChapterCache
 import app.ao3reader.data.LibraryRepository
@@ -111,8 +112,14 @@ class AppContainer(val context: Context) {
     /** Kudos, bookmarks, mark for later, subscriptions (works, series, authors) and comments. */
     val actionRepo: ActionRepository by lazy { ActionRepository(session, appScope) }
 
+    /** Account actions run here, not in a screen's scope: navigating away never cancels a POST. */
+    val actionRunner: ActionRunner by lazy { ActionRunner(appScope) }
+
     /** Signed in while an account acts (restricted works show), else signed out. */
     val workListRepo: WorkListRepository by lazy {
-        WorkListRepository({ session.actingAccount.value != null }, { session.authedGet(it) }, { fetcher.get(it) })
+        WorkListRepository(
+            { session.actingAccount.value != null }, { session.authedGet(it) }, { fetcher.get(it) },
+            signedInPage = { list, html, pageUrl -> actionRepo.updateList(list, html, pageUrl) },
+        )
     }
 }

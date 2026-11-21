@@ -12,7 +12,17 @@ import app.ao3reader.ao3.model.WorkBlurb
 import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.ao3.parse.Ao3Urls
 import app.ao3reader.ao3.parse.WorkListPage
+import app.ao3reader.data.ActionRunner
+import app.ao3reader.data.ListActionSource
 import app.ao3reader.data.Loaded
+import app.ao3reader.ui.common.ActionMessage
+import app.ao3reader.ui.common.WorkAction
+import app.ao3reader.ui.common.actionFeedback
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import app.ao3reader.data.WorkListSource
 import app.ao3reader.data.db.ProgressDao
 import app.ao3reader.data.db.ProgressEntity
@@ -60,6 +70,17 @@ data class WorkListUiState(
     val readMarks: Set<Long> = emptySet(),
 )
 
+/** The header's Subscribe / Unsubscribe button for a series or author. */
+@Immutable
+data class ListSubscribeUi(
+    /** False: no button. */
+    val signedIn: Boolean = false,
+    /** AO3's state has been read (a series page carries it; an author's is read on the first tap). */
+    val known: Boolean = false,
+    val subscribed: Boolean = false,
+    val running: Boolean = false,
+)
+
 /**
  * A series' or author's works (in AO3's order: series order for a series). Paging works like Search:
  * one request at a time, appended, deduped by work; an error keeps the works shown.
@@ -73,6 +94,8 @@ class WorkListViewModel(
     private val progressDao: ProgressDao,
     private val readMarkDao: ReadMarkDao,
     private val parseDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val listActions: ListActionSource? = null,
+    private val runner: ActionRunner? = null,
 ) : ViewModel() {
     private val url: HttpUrl? = Ao3Urls.workListOrNull(rawUrl)
     private val _state = MutableStateFlow(WorkListUiState(title = title, invalid = url == null))
@@ -80,6 +103,64 @@ class WorkListViewModel(
 
     private var generation = 0
     private var job: Job? = null
+
+    private val _messages = Channel<ActionMessage>(Channel.BUFFERED)
+    /** One-off feedback for a snackbar. */
+    val messages: Flow<ActionMessage> = _messages.receiveAsFlow()
+
+    private val listKey: String? = url?.let { u -> listActions?.listKey(u) }
+    private val runKey: String? = listKey?.let { ActionRunner.listKey(it) }
+
+    /** Narrow: this list's entry, the sign-in state and whether its toggle runs. */
+    val subscribe: StateFlow<ListSubscribeUi> = run {
+        val src = listActions
+        val r = runner
+        val key = listKey
+        if (src == null || r == null || key == null) return@run MutableStateFlow(ListSubscribeUi()).asStateFlow()
+        fun ui(signedIn: Boolean, known: Boolean, subscribed: Boolean, running: Boolean) =
+            ListSubscribeUi(signedIn, known, subscribed, running)
+        combine(
+            src.actingAccount.map { it != null }.distinctUntilChanged(),
+            src.listState.map { it[key] }.distinctUntilChanged(),
+            r.running.map { runKey in it }.distinctUntilChanged(),
+        ) { signedIn, l, running -> ui(signedIn, l != null, l?.subscribed == true, running) }
+            .stateIn(
+                viewModelScope, SharingStarted.Eagerly,
+                src.listState.value[key].let { l -> ui(src.actingAccount.value != null, l != null, l?.subscribed == true, runKey in r.running.value) },
+            )
+    }
+
+    /**
+     * Subscribes or unsubscribes in the app scope (a tap while it runs is ignored). Unknown state reads
+     * as "not subscribed", so it is read first, and a list already subscribed is left alone.
+     */
+    fun toggleSubscribe() {
+        val src = listActions ?: return
+        val list = url ?: return
+        val key = listKey ?: return
+        val r = runner ?: return
+        if (src.actingAccount.value == null) return
+        val intended = src.listState.value[key]?.subscribed != true
+        val d = r.launch(runKey!!) {
+            if (src.listState.value[key] == null) {
+                when (val fresh = src.refreshList(list)) {
+                    is Loaded.Error -> return@launch fresh
+                    is Loaded.Ok -> if (fresh.value.subscribed == intended) return@launch Loaded.Ok(intended)
+                }
+            }
+            src.toggleListSubscribe(list)
+        } ?: return
+        viewModelScope.launch {
+            val res: Loaded<Boolean> = try {
+                d.await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Loaded.Error(FetchResult.Failed(e))
+            }
+            _messages.trySend(actionFeedback(WorkAction.SUBSCRIBE, res))
+        }
+    }
 
     init {
         viewModelScope.launch {
@@ -171,6 +252,7 @@ class WorkListViewModel(
                 WorkListViewModel(
                     rawUrl, title, container.workListRepo,
                     container.db.progressDao(), container.db.readMarkDao(),
+                    listActions = container.actionRepo, runner = container.actionRunner,
                 )
             }
         }

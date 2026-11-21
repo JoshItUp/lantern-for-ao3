@@ -214,6 +214,7 @@ fun AppNav(container: AppContainer) {
                     onBack = { if (nav.currentBackStackEntry?.id == e.id) nav.popBackStack() },
                     onOpenWork = ::openWork,
                     onOpenWorkList = ::openWorkList,
+                    onAccount = ::openAccount,
                 )
             }
             composable(Routes.ACCOUNT) { e ->
@@ -239,6 +240,7 @@ fun AppNav(container: AppContainer) {
                     vm,
                     onBack = { if (nav.currentBackStackEntry?.id == e.id) nav.popBackStack() },
                     onOpenWorkList = ::openWorkList,
+                    onAccount = ::openAccount,
                 )
             }
         }

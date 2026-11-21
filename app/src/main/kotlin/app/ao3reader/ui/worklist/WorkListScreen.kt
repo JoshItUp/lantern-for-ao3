@@ -25,6 +25,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,8 +60,22 @@ private const val PREFETCH_DISTANCE = 5
 /** A series' or author's works: back arrow and title, then the works as Search shows them. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun WorkListScreen(vm: WorkListViewModel, onBack: () -> Unit, onOpenWork: OpenWork, onOpenWorkList: OpenWorkList) {
+fun WorkListScreen(
+    vm: WorkListViewModel,
+    onBack: () -> Unit,
+    onOpenWork: OpenWork,
+    onOpenWorkList: OpenWorkList,
+    onAccount: () -> Unit,
+) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    val account by rememberUpdatedState(onAccount)
+    LaunchedEffect(vm, snackbar) {
+        vm.messages.collect { m ->
+            val r = snackbar.showSnackbar(m.text, actionLabel = if (m.toAccount) "Account" else null, duration = SnackbarDuration.Short)
+            if (r == SnackbarResult.ActionPerformed) account()
+        }
+    }
     val current by rememberUpdatedState(state)
     val listState = rememberLazyListState()
     val nearEnd by remember(listState) {
@@ -74,6 +92,7 @@ fun WorkListScreen(vm: WorkListViewModel, onBack: () -> Unit, onOpenWork: OpenWo
             .collect { vm.loadNextPage() }
     }
 
+    Box(Modifier.fillMaxSize()) {
     Column(
         Modifier
             .fillMaxSize()
@@ -84,8 +103,9 @@ fun WorkListScreen(vm: WorkListViewModel, onBack: () -> Unit, onOpenWork: OpenWo
             IconButton(onClick = onBack) { Icon(AppIcons.Back, contentDescription = "Back") }
             Text(
                 state.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 4.dp, end = 16.dp),
+                modifier = Modifier.weight(1f).padding(start = 4.dp, end = 8.dp),
             )
+            if (!state.invalid) SubscribeButton(vm)
         }
         // Fixed 2 dp slot: page 1 loading shows here (no full-screen spinner); the list never shifts.
         Box(Modifier.fillMaxWidth().height(2.dp)) {
@@ -127,6 +147,22 @@ fun WorkListScreen(vm: WorkListViewModel, onBack: () -> Unit, onOpenWork: OpenWo
                 }
             }
         }
+    }
+    SnackbarHost(
+        snackbar,
+        Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility),
+    )
+    }
+}
+
+/** Subscribe / Unsubscribe for the series or author (signed in only); collects its own narrow state. */
+@Composable
+private fun SubscribeButton(vm: WorkListViewModel) {
+    val ui by vm.subscribe.collectAsStateWithLifecycle()
+    if (!ui.signedIn) return
+    TextButton(onClick = vm::toggleSubscribe, enabled = !ui.running, modifier = Modifier.padding(end = 4.dp)) {
+        if (ui.running) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+        else Text(if (ui.subscribed) "Unsubscribe" else "Subscribe")
     }
 }
 

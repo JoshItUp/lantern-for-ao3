@@ -4,6 +4,7 @@ import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.ao3.parse.Ao3Urls
 import app.ao3reader.ao3.parse.WorkListPage
 import app.ao3reader.ao3.parse.WorkListParser
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -26,12 +27,20 @@ class WorkListRepository(
     private val authedGet: suspend (HttpUrl) -> FetchResult,
     private val plainGet: suspend (HttpUrl) -> FetchResult,
     private val parseDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    /** Each signed-in page, with its list: the subscribe state ([ActionRepository.updateList]). */
+    private val signedInPage: ((list: HttpUrl, html: String, pageUrl: HttpUrl) -> Unit)? = null,
 ) : WorkListSource {
     override suspend fun load(url: HttpUrl, page: Int): Loaded<WorkListPage> {
         val list = Ao3Urls.workList(url) ?: return Loaded.Error(FetchResult.Failed(NotAWorkListException()))
         val target = Ao3Urls.page(list, page)
-        val r = if (acting()) authedGet(target) else plainGet(target)
+        val signedIn = acting()
+        val r = if (signedIn) authedGet(target) else plainGet(target)
         if (r !is FetchResult.Ok) return Loaded.Error(r)
-        return Loaded.Ok(withContext(parseDispatcher) { WorkListParser.parse(r.html, page) })
+        return Loaded.Ok(withContext(parseDispatcher) {
+            if (signedIn) signedInPage?.let { sink ->
+                try { sink(list, r.html, r.finalUrl) } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+            }
+            WorkListParser.parse(r.html, page)
+        })
     }
 }

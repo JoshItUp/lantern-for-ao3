@@ -54,7 +54,7 @@ class ActionMayHaveTakenEffectException(val result: FetchResult) : Exception("th
  * State is per account: it is cleared whenever [Session.actingAccount] changes. Form fields and comment text
  * are never logged.
  */
-class ActionRepository(private val session: Session, scope: CoroutineScope? = null) {
+class ActionRepository(private val session: Session, scope: CoroutineScope? = null) : WorkActionSource, ListActionSource {
     private val works = Book<Long, WorkActions>()
     private val lists = Book<String, ListActions>()
     private val locks = ConcurrentHashMap<String, Mutex>()
@@ -63,9 +63,10 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
     @Volatile private var account: String? = session.actingAccount.value?.lowercase()
 
     /** Per work id: the latest known actions, pending toggles applied. */
-    val state: StateFlow<Map<Long, WorkActions>> = works.flow
+    override val state: StateFlow<Map<Long, WorkActions>> = works.flow
     /** Per list key ([listKey]): the latest known, pending toggles applied. */
-    val listState: StateFlow<Map<String, ListActions>> = lists.flow
+    override val listState: StateFlow<Map<String, ListActions>> = lists.flow
+    override val actingAccount: StateFlow<String?> get() = session.actingAccount
 
     init {
         scope?.launch { session.actingAccount.collect { syncAccount() } }
@@ -91,7 +92,7 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
     }
 
     /** The owner's bookmark on [workId] as the known edit form holds it; null when not bookmarked or no edit form is known. */
-    fun existingBookmark(workId: Long): BookmarkInput? {
+    override fun existingBookmark(workId: Long): BookmarkInput? {
         syncAccount()
         val a = works.get(workId)?.value ?: return null
         val f = a.bookmarkForm?.takeIf { a.bookmarked && isEditForm(it) } ?: return null
@@ -106,21 +107,21 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
     }
 
     /** GETs the work page (the last one seen, else the work) and updates [state]. */
-    suspend fun refresh(workId: Long): Loaded<WorkActions> {
+    override suspend fun refresh(workId: Long): Loaded<WorkActions> {
         syncAccount()
         if (session.actingAccount.value == null) return notSignedIn()
         return fetchWork(workId, works.get(workId)?.pageUrl ?: Ao3Urls.chapter(workId, null))
     }
 
     /** GETs the subscribe page of the list at [listUrl] and updates [listState]. */
-    suspend fun refreshList(listUrl: HttpUrl): Loaded<ListActions> {
+    override suspend fun refreshList(listUrl: HttpUrl): Loaded<ListActions> {
         syncAccount()
         val key = listKey(listUrl) ?: return notAList()
         if (session.actingAccount.value == null) return notSignedIn()
         return fetchList(key, Ao3Urls.subscribePage(listUrl)!!)
     }
 
-    suspend fun kudos(workId: Long): Loaded<Unit> {
+    override suspend fun kudos(workId: Long): Loaded<Unit> {
         syncAccount()
         if (session.actingAccount.value == null) return notSignedIn()
         val acct = account
@@ -148,18 +149,18 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
      * Mark for later or mark as read. A call while one for the same work is in flight sends nothing and
      * returns `Ok(pending value)`: that is NOT a confirmed result, only what the first call is trying to do.
      */
-    suspend fun toggleMarkForLater(workId: Long): Loaded<Boolean> =
+    override suspend fun toggleMarkForLater(workId: Long): Loaded<Boolean> =
         toggleWork(workId, "mfl", { it.markedForLater }, { a, v -> a.copy(markedForLater = v) }) { it.markForLater }
 
     /** Subscribe or unsubscribe; a call during one in flight returns `Ok(pending value)`, NOT a confirmed result. */
-    suspend fun toggleSubscribe(workId: Long): Loaded<Boolean> =
+    override suspend fun toggleSubscribe(workId: Long): Loaded<Boolean> =
         toggleWork(workId, "sub", { it.subscribed }, { a, v -> a.copy(subscribed = v) }) { it.subscribe }
 
     /**
      * Subscribe to or unsubscribe from a series or an author; [listUrl] is any in-app work list URL
      * ([Ao3Urls.workList]). A call during one in flight returns `Ok(pending value)`, NOT a confirmed result.
      */
-    suspend fun toggleListSubscribe(listUrl: HttpUrl): Loaded<Boolean> {
+    override suspend fun toggleListSubscribe(listUrl: HttpUrl): Loaded<Boolean> {
         syncAccount()
         val key = listKey(listUrl) ?: return notAList()
         val page = Ao3Urls.subscribePage(listUrl)!!
@@ -205,7 +206,7 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
      * Creates the bookmark, or edits the existing one (fetching its edit page when only the link is known).
      * A bookmark found to exist already is edited with [input]: it is never reported saved without it.
      */
-    suspend fun saveBookmark(workId: Long, input: BookmarkInput): Loaded<Unit> {
+    override suspend fun saveBookmark(workId: Long, input: BookmarkInput): Loaded<Unit> {
         syncAccount()
         if (session.actingAccount.value == null) return notSignedIn()
         return lock("bookmark:$workId").withLock {
@@ -227,7 +228,7 @@ class ActionRepository(private val session: Session, scope: CoroutineScope? = nu
      * Confirmed by the answer being the work's page or AO3's "Comment created" notice; otherwise
      * [ActionUnconfirmedException]. A failure after sending is [ActionMayHaveTakenEffectException].
      */
-    suspend fun comment(workId: Long, chapterId: Long?, text: String): Loaded<Unit> {
+    override suspend fun comment(workId: Long, chapterId: Long?, text: String): Loaded<Unit> {
         if (text.isBlank()) return Loaded.Error(FetchResult.Failed(IllegalArgumentException("comment is blank")))
         syncAccount()
         if (session.actingAccount.value == null) return notSignedIn()
