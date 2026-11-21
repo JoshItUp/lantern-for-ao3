@@ -1,6 +1,7 @@
 package app.ao3reader.ui.reader
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -10,11 +11,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.NavigationDrawerItem
@@ -26,6 +30,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -39,6 +44,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.ao3reader.ao3.model.ChapterRef
 import app.ao3reader.data.ReaderFont
+import app.ao3reader.data.db.DownloadEntity
+import app.ao3reader.ui.common.AppIcons
 import kotlin.math.roundToInt
 
 private val MenuIcon: ImageVector by lazy {
@@ -58,7 +65,14 @@ private fun ChapterRef.display(): String = if (title.isBlank()) "Chapter $number
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReaderTopBar(label: String, onMenu: () -> Unit, onFont: () -> Unit, modifier: Modifier = Modifier) {
+fun ReaderTopBar(
+    label: String,
+    onMenu: () -> Unit,
+    onFont: () -> Unit,
+    download: DownloadEntity?,
+    onDownload: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     CenterAlignedTopAppBar(
         modifier = modifier,
         title = { Text(label, style = MaterialTheme.typography.titleMedium) },
@@ -67,11 +81,49 @@ fun ReaderTopBar(label: String, onMenu: () -> Unit, onFont: () -> Unit, modifier
         },
         actions = {
             TextButton(onClick = onFont) { Text("Aa", fontSize = 18.sp) }
+            ReaderOverflowMenu(download, onDownload)
         },
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
         ),
     )
+}
+
+/** The ⋯ menu: for now just Download (works signed out too), labelled and enabled as the footer's button. */
+@Composable
+private fun ReaderOverflowMenu(download: DownloadEntity?, onDownload: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) { Icon(AppIcons.More, contentDescription = "More") }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            val ui = downloadUi(download, showNewChapters = true)
+            val supporting = ui.failure ?: ui.newLine
+            DropdownMenuItem(
+                text = {
+                    Column {
+                        Text(ui.label)
+                        if (supporting != null) {
+                            Text(
+                                supporting, style = MaterialTheme.typography.bodySmall,
+                                color = if (ui.failure != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 3, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                },
+                leadingIcon = { Icon(AppIcons.Download, contentDescription = null) },
+                enabled = ui.enabled,
+                colors = MenuDefaults.itemColors(
+                    disabledTextColor = if (ui.done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    disabledLeadingIconColor = if (ui.done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+                onClick = {
+                    open = false
+                    onDownload()
+                },
+            )
+        }
+    }
 }
 
 @Composable
