@@ -139,6 +139,8 @@ class ReaderViewModel(
     private val runner: ActionRunner? = null,
     /** This work's download row ([app.ao3reader.data.download.DownloadRepository.observe]); null: no downloads. */
     private val downloadState: Flow<DownloadEntity?>? = null,
+    /** Queues a download ([app.ao3reader.data.download.DownloadRepository.request]); null: no downloads. */
+    private val requestDownload: (suspend (workId: Long, title: String, authors: List<String>) -> Unit)? = null,
 ) : ViewModel() {
     /**
      * The chapter to open: the handle's values when it has them (on a fresh open these are the
@@ -329,6 +331,26 @@ class ReaderViewModel(
             val ref = s.chapters[s.index]
             loadJob = viewModelScope.launch { loadChapter(s.index, ref) }
         }
+    }
+
+    /** This work's download row alone, so the download slot never recomposes with the chapter text. */
+    val download: StateFlow<DownloadEntity?> = _state.map { it.download }.distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * Download, update or retry. Runs on the app scope ([runner]) so leaving the reader never cancels it;
+     * works signed out (downloads need no account). Nothing happens once the copy is current.
+     */
+    fun onDownload() {
+        val s = _state.value
+        val d = s.download
+        if (downloadLabel(d) == DOWNLOADED_LABEL) return
+        val req = requestDownload ?: return
+        val title = s.content?.workTitle?.takeIf { it.isNotBlank() } ?: d?.title ?: ""
+        val authors = s.content?.authors ?: d?.authors?.split(", ")?.filter { it.isNotEmpty() } ?: emptyList()
+        val block: suspend () -> Unit = { req(workId, title, authors) }
+        val r = runner
+        if (r != null) r.launch(ActionRunner.workKey(workId, "DOWNLOAD"), block) else viewModelScope.launch { block() }
     }
 
     fun toggleControls() = _state.update { it.copy(controlsVisible = !it.controlsVisible) }
@@ -703,6 +725,7 @@ class ReaderViewModel(
                         savedState = createSavedStateHandle(),
                         actionSource = container.actionRepo, runner = container.actionRunner,
                         downloadState = container.downloadRepo.observe(workId),
+                        requestDownload = container.downloadRepo::request,
                     )
                 }
             }
