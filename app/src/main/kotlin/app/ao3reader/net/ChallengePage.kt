@@ -1,6 +1,7 @@
 package app.ao3reader.net
 
 import app.ao3reader.ao3.net.isRobotPage
+import app.ao3reader.ao3.parse.Ao3Urls
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
@@ -13,14 +14,13 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 internal fun isChallengePage(title: String, html: String): Boolean =
     title.contains("Just a moment", ignoreCase = true) || isRobotPage(html)
 
-private const val AO3_HOST = "archiveofourown.org"
 private val CLOUDFLARE_HOSTS = setOf("challenges.cloudflare.com")
 
 /** Where the challenge WebView may navigate: https AO3 (and its subdomains) and Cloudflare's challenge host. */
 internal fun isAllowedChallengeUrl(url: String?): Boolean {
     if (url == null || !url.startsWith("https://", ignoreCase = true)) return false
     val host = url.toHttpUrlOrNull()?.host ?: return false   // already lowercased
-    return host == AO3_HOST || host.endsWith(".$AO3_HOST") || host in CLOUDFLARE_HOSTS
+    return host == Ao3Urls.HOST || host.endsWith(".${Ao3Urls.HOST}") || host in CLOUDFLARE_HOSTS
 }
 
 /**

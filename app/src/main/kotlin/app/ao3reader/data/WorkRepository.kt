@@ -30,6 +30,10 @@ interface ChapterSource {
     fun listUpdates(workId: Long): Flow<List<ChapterRef>> = emptyFlow()
 }
 
+/** Chapters are matched by id, or by number when the id is unknown on either side; never by title. */
+internal fun ChapterRef.matches(chapterId: Long?, number: Int): Boolean =
+    if (chapterId != null && this.chapterId != null) this.chapterId == chapterId else this.number == number
+
 /** An Ok response that has no chapter text (e.g. AO3's sign-in page for a registered-users-only work). */
 class NotAChapterPageException : IllegalStateException("not a chapter page")
 

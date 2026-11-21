@@ -38,11 +38,11 @@ import app.ao3reader.ui.common.BlockText
 import app.ao3reader.ui.common.CardLinks
 import app.ao3reader.ui.common.OpenWorkList
 import app.ao3reader.ui.common.WorkLink
+import app.ao3reader.ui.theme.WarningColor
 
 private val CardShape = RoundedCornerShape(16.dp)
 private val TagShape = RoundedCornerShape(6.dp)
 private val TagBackground = Color.White.copy(alpha = 0.07f)
-private val WarningColor = Color(0xFFE8A27C)
 
 /**
  * What the card's corner badge says: reading progress wins over an AO3 history mark; a downloaded work

@@ -33,7 +33,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -43,10 +42,11 @@ import app.ao3reader.data.db.DownloadJob
 import app.ao3reader.data.db.ProgressEntity
 import app.ao3reader.ui.search.WorkCard
 import app.ao3reader.ui.search.badgeText
+import app.ao3reader.ui.common.Hint
+import app.ao3reader.ui.theme.WarningColor
 
 private val RowShape = RoundedCornerShape(16.dp)
 private val ChipShape = RoundedCornerShape(6.dp)
-private val FailureColor = Color(0xFFE8A27C)
 
 const val DOWNLOADS_EMPTY = "Download works from the reader to read them offline."
 
@@ -222,7 +222,7 @@ private fun PendingRow(
 @Composable
 private fun Failure(row: DownloadRow) {
     val reason = row.entity.failure?.takeIf { row.entity.job == DownloadJob.FAILED } ?: return
-    Text(reason, style = MaterialTheme.typography.labelMedium, color = FailureColor)
+    Text(reason, style = MaterialTheme.typography.labelMedium, color = WarningColor)
 }
 
 /** While a job runs only its state shows (no Update or Delete); otherwise the ⋯ menu. */

@@ -46,6 +46,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.ui.common.AppIcons
+import app.ao3reader.ui.common.Hint
+import app.ao3reader.ui.common.Loading
 import app.ao3reader.ui.common.OpenWorkList
 import app.ao3reader.ui.search.OpenWork
 import app.ao3reader.ui.search.WorkCard
@@ -175,21 +177,4 @@ private fun ErrorRow(error: FetchResult, onRetry: () -> Unit) {
         )
         TextButton(onClick = onRetry) { Text("Retry") }
     }
-}
-
-@Composable
-private fun Loading() {
-    Box(Modifier.fillMaxWidth().padding(vertical = 20.dp), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
-    }
-}
-
-@Composable
-private fun Hint(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
-    )
 }

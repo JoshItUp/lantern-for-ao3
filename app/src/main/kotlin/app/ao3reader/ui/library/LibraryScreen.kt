@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,7 +22,6 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -58,6 +56,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.data.LibrarySection
 import app.ao3reader.ui.common.BlockText
+import app.ao3reader.ui.common.Hint
+import app.ao3reader.ui.common.Loading
 import app.ao3reader.ui.common.OpenWorkList
 import app.ao3reader.ui.search.OpenWork
 import app.ao3reader.ui.search.Tags
@@ -397,21 +397,4 @@ private fun ErrorRow(error: FetchResult, onRetry: () -> Unit) {
         )
         TextButton(onClick = onRetry) { Text("Retry") }
     }
-}
-
-@Composable
-private fun Loading() {
-    Box(Modifier.fillMaxWidth().padding(vertical = 20.dp), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
-    }
-}
-
-@Composable
-internal fun Hint(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
-    )
 }

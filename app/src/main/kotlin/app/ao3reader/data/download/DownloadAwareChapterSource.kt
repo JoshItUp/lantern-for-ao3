@@ -7,6 +7,7 @@ import app.ao3reader.data.ChapterSource
 import app.ao3reader.data.Loaded
 import app.ao3reader.data.NotAChapterPageException
 import app.ao3reader.data.WorkRepository
+import app.ao3reader.data.matches
 import app.ao3reader.data.db.DownloadChapterEntity
 import app.ao3reader.data.db.DownloadDao
 import kotlinx.coroutines.CancellationException
@@ -66,7 +67,7 @@ class DownloadAwareChapterSource(
                 if (list != null) {
                     downloads.notePostedRemote(workId, list.size)
                     // Null-tolerant: a one-shot is stored without a chapter id but listed online with one.
-                    val added = list.filter { o -> stored.none { it.sameChapter(o) } }
+                    val added = list.filter { o -> stored.none { it.matches(o.chapterId, o.number) } }
                     if (added.isNotEmpty()) result = stored + added
                 }
             } catch (e: CancellationException) {
@@ -114,10 +115,6 @@ class DownloadAwareChapterSource(
     }
 
     private fun notDownloaded() = Loaded.Error(FetchResult.Failed(NotDownloadedException()))
-
-    /** The same chapter: by id, else (an id unknown on either side) by number. */
-    private fun ChapterRef.sameChapter(o: ChapterRef) =
-        if (chapterId != null && o.chapterId != null) chapterId == o.chapterId else number == o.number
 
     /** By chapter id, else (an id unknown on either side) by number. */
     private fun List<DownloadChapterEntity>.find(ref: ChapterRef): DownloadChapterEntity? =

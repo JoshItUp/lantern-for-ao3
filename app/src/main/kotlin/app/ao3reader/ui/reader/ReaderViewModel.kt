@@ -19,6 +19,7 @@ import app.ao3reader.data.ActionRunner
 import app.ao3reader.data.ActionUnconfirmedException
 import app.ao3reader.data.ChapterSource
 import app.ao3reader.data.WorkActionSource
+import app.ao3reader.data.matches
 import app.ao3reader.ui.common.ActionMessage
 import app.ao3reader.ui.common.COMMENT_MAY_NOT_HAVE_POSTED
 import app.ao3reader.ui.common.WorkAction
@@ -747,7 +748,3 @@ class ReaderViewModel(
             }
     }
 }
-
-/** Chapters are matched by id, or by number when the id is unknown; never by title. */
-internal fun ChapterRef.matches(chapterId: Long?, number: Int): Boolean =
-    if (chapterId != null && this.chapterId != null) this.chapterId == chapterId else this.number == number

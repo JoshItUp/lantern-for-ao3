@@ -9,6 +9,8 @@ import androidx.compose.ui.platform.LocalContext
 
 val NearBlackBackground = Color(0xFF0B0B0C)
 val NearBlackSurface = Color(0xFF141416)
+/** Warm orange for AO3's archive warnings and failed downloads. */
+val WarningColor = Color(0xFFE8A27C)
 
 /** Dark-only Material 3 theme: near-black base with dynamic-colour accents. */
 @Composable
