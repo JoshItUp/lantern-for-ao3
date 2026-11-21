@@ -12,6 +12,7 @@ import app.ao3reader.ao3.net.Ao3Fetcher
 import app.ao3reader.ao3.net.Fetcher
 import androidx.room.Room
 import app.ao3reader.data.ActionRepository
+import app.ao3reader.data.AuthedFetch
 import app.ao3reader.data.ChapterCache
 import app.ao3reader.data.LibraryRepository
 import app.ao3reader.data.SearchRepository
@@ -30,6 +31,7 @@ import app.ao3reader.net.cachedUserAgent
 import app.ao3reader.net.clearAo3SessionCookies
 import app.ao3reader.net.WebViewChallengeSolver
 import okhttp3.Cache
+import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -91,7 +93,17 @@ class AppContainer(val context: Context) {
 
     val searchRepo: SearchRepository by lazy { SearchRepository(fetcher) }
 
-    val workRepo: WorkRepository by lazy { WorkRepository(fetcher, chapterCache, appScope) }
+    /** Chapters a signed-in owner opens are fetched (or visited) signed in, for AO3 History; prefetches go signed out. */
+    val workRepo: WorkRepository by lazy {
+        WorkRepository(
+            fetcher, chapterCache, appScope,
+            authed = object : AuthedFetch {
+                override fun isActing() = session.actingAccount.value != null
+                override suspend fun get(url: HttpUrl, interactive: Boolean) = session.authedGet(url, interactive = interactive)
+            },
+            actions = { workId, html, pageUrl -> actionRepo.update(workId, html, pageUrl) },
+        )
+    }
 
     val libraryRepo: LibraryRepository by lazy { LibraryRepository(session, db) }
 
