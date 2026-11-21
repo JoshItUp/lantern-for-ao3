@@ -11,6 +11,7 @@ import app.ao3reader.account.keystoreSecretBox
 import app.ao3reader.ao3.net.Ao3Fetcher
 import app.ao3reader.ao3.net.Fetcher
 import androidx.room.Room
+import app.ao3reader.data.ActionRepository
 import app.ao3reader.data.ChapterCache
 import app.ao3reader.data.LibraryRepository
 import app.ao3reader.data.SearchRepository
@@ -93,6 +94,9 @@ class AppContainer(val context: Context) {
     val workRepo: WorkRepository by lazy { WorkRepository(fetcher, chapterCache, appScope) }
 
     val libraryRepo: LibraryRepository by lazy { LibraryRepository(session, db) }
+
+    /** Kudos, bookmarks, mark for later, subscriptions (works, series, authors) and comments. */
+    val actionRepo: ActionRepository by lazy { ActionRepository(session) }
 
     /** Signed in while an account acts (restricted works show), else signed out. */
     val workListRepo: WorkListRepository by lazy {

@@ -13,7 +13,7 @@ object AccountParser {
     /** Signed in = a `/users/<name>` link directly inside `#greeting`; deeper paths (e.g. /users/x/pseuds/y) are skipped. */
     fun state(html: String): AccountState = state(Jsoup.parse(html))
 
-    private fun state(doc: org.jsoup.nodes.Document): AccountState {
+    internal fun state(doc: org.jsoup.nodes.Document): AccountState {
         val greeting = doc.selectFirst("#greeting")
         if (greeting != null) {
             for (a in greeting.select("a[href]")) {

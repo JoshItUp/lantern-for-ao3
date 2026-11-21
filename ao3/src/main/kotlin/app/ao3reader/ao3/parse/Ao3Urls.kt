@@ -89,6 +89,19 @@ object Ao3Urls {
         }
     }
 
+    /** A user's own page (`/users/{u}`): where AO3 puts the subscribe form for the user (not on `/users/{u}/works`). */
+    fun user(user: String): HttpUrl = "$BASE/".toHttpUrl().newBuilder().addPathSegment("users").addPathSegment(user).build()
+
+    /**
+     * The page holding the subscribe form for the list at [url]: the series page, or the user's page for an
+     * author's (or pseud's) works. Null when [url] is not an in-app work list ([workList]).
+     */
+    fun subscribePage(url: HttpUrl): HttpUrl? {
+        val list = workList(url) ?: return null
+        val seg = list.pathSegments
+        return if (seg[0] == "series") list else user(seg[1])
+    }
+
     /** [workList] of a string (e.g. a decoded navigation argument); null when it is not a URL at all. */
     fun workListOrNull(url: String?): HttpUrl? = url?.toHttpUrlOrNull()?.let(::workList)
 }

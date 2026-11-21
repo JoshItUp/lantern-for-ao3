@@ -175,7 +175,7 @@ class AccountViewModel(private val source: AccountSource) : ViewModel() {
 
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { AccountViewModel(container.session.asAccountSource { container.libraryRepo.clear() }) }
+            initializer { AccountViewModel(container.session.asAccountSource { container.libraryRepo.clear(); container.actionRepo.clear() }) }
         }
     }
 }
