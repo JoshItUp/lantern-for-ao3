@@ -22,7 +22,7 @@ class PersistentCookieJarTest {
 
     @Test
     fun `saved cookies are returned for matching url`() {
-        val jar = PersistentCookieJar(manager)
+        val jar = PersistentCookieJar { manager }
         jar.saveFromResponse(url, listOf(Cookie.Builder().name("cf_clearance").value("abc").domain("archiveofourown.org").path("/").build()))
         val loaded = jar.loadForRequest(url)
         assertEquals(listOf("cf_clearance"), loaded.map { it.name })
@@ -31,7 +31,7 @@ class PersistentCookieJarTest {
 
     @Test
     fun `cookies not returned for other host`() {
-        val jar = PersistentCookieJar(manager)
+        val jar = PersistentCookieJar { manager }
         jar.saveFromResponse(url, listOf(Cookie.Builder().name("a").value("b").domain("archiveofourown.org").path("/").build()))
         assertTrue(jar.loadForRequest("https://example.com/".toHttpUrl()).isEmpty())
     }
@@ -39,7 +39,7 @@ class PersistentCookieJarTest {
     @Test
     fun `cookie set via CookieManager directly is visible to OkHttp`() {
         manager.setCookie("https://archiveofourown.org/", "_otwarchive_session=xyz; Path=/")
-        val loaded = PersistentCookieJar(manager).loadForRequest(url)
+        val loaded = PersistentCookieJar { manager }.loadForRequest(url)
         assertEquals("xyz", loaded.single { it.name == "_otwarchive_session" }.value)
     }
 }

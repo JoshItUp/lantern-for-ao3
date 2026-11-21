@@ -3,7 +3,6 @@ package app.ao3reader.net
 import android.content.Context
 import android.content.Intent
 import app.ao3reader.ao3.net.ChallengeSolver
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull

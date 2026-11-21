@@ -83,8 +83,7 @@ data class ReaderUiState(
 data class ActionsUi(
     /** False: the row is replaced by a sign-in button. */
     val signedIn: Boolean = false,
-    /** AO3's state for this work has arrived (from a signed-in page); until then everything reads "not done". */
-    val known: Boolean = false,
+    // Until AO3's state for this work arrives (from a signed-in page) these read "not done".
     val kudosGiven: Boolean = false,
     val bookmarked: Boolean = false,
     val markedForLater: Boolean = false,
@@ -477,7 +476,6 @@ class ReaderViewModel(
 
     private fun actionsUi(signedIn: Boolean, a: WorkActions?, running: Set<WorkAction>) = ActionsUi(
         signedIn = signedIn,
-        known = a != null,
         kudosGiven = a?.kudosGiven == true,
         bookmarked = a?.bookmarked == true,
         markedForLater = a?.markedForLater == true,

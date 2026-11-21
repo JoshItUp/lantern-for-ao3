@@ -11,8 +11,6 @@ import okhttp3.HttpUrl
  * request (OkHttp calls the jar on its own threads, never the main thread).
  */
 class PersistentCookieJar(manager: () -> CookieManager) : CookieJar {
-    constructor(manager: CookieManager) : this({ manager })
-
     private val cookieManager by lazy(manager)
 
     override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {

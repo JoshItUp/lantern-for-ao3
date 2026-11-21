@@ -100,7 +100,7 @@ class WorkListViewModelTest {
         lists.listState.value = mapOf(seriesKey to ListActions(subscribeForm, subscribed = false))
         val gate = CompletableDeferred<Unit>().also { lists.gate = it }
         val vm = subVm(); advanceUntilIdle()
-        assertTrue(vm.subscribe.value.signedIn && vm.subscribe.value.known)
+        assertTrue(vm.subscribe.value.signedIn)
         assertFalse(vm.subscribe.value.subscribed)
         vm.toggleSubscribe(); runCurrent()
         assertTrue(vm.subscribe.value.running)
@@ -115,7 +115,7 @@ class WorkListViewModelTest {
     @Test fun `an unknown list is read first and an existing subscription is never undone`() = subTest {
         lists.refreshed = ListActions(subscribeForm, subscribed = true)
         val vm = subVm("https://archiveofourown.org/users/Bob/works"); advanceUntilIdle()
-        assertFalse(vm.subscribe.value.known)
+        assertFalse(vm.subscribe.value.subscribed)
         vm.toggleSubscribe(); advanceUntilIdle()
         assertEquals(listOf("refresh:https://archiveofourown.org/users/Bob/works"), lists.calls)
         assertTrue(vm.subscribe.value.subscribed)

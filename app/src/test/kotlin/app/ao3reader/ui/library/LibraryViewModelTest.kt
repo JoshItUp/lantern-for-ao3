@@ -322,7 +322,7 @@ class LibraryViewModelTest {
         val vm = vm()
         advanceUntilIdle()
         assertTrue(vm.state.value.signedIn)
-        assertTrue(isNotSignedIn(vm.section(HISTORY).error!!))
+        assertTrue((vm.section(HISTORY).error as FetchResult.Failed).cause is NotSignedInException)
         source.respond(HISTORY, 1, page(1, false, 1))
         vm.retry(HISTORY); advanceUntilIdle()
         assertEquals(listOf(1L), vm.section(HISTORY).works.map { it.workId })
@@ -351,8 +351,6 @@ class LibraryViewModelTest {
     }
 
     @Test fun `not signed in errors are recognised`() {
-        assertTrue(isNotSignedIn(FetchResult.Failed(NotSignedInException())))
-        assertFalse(isNotSignedIn(FetchResult.Blocked))
         // Only shown while an account acts (no account shows the prompt): a plain, retryable error.
         assertEquals("Couldn't load results.", libraryErrorMessage(FetchResult.Failed(NotSignedInException())))
         assertEquals("AO3 is blocking requests right now.", libraryErrorMessage(FetchResult.Blocked))

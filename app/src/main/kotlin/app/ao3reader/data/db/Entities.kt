@@ -23,7 +23,7 @@ data class ProgressEntity(
     val updatedAt: Long,
 )
 
-/** Filled by plan 2 History loads. */
+/** Filled by History loads ([app.ao3reader.data.LibraryRepository.load]). */
 @Entity
 data class ReadMarkEntity(
     @PrimaryKey val workId: Long,

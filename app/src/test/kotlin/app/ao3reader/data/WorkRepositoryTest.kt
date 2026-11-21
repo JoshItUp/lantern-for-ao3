@@ -400,15 +400,13 @@ class WorkRepositoryTest {
         val signedInHtml = CHAPTER_HTML.replace("Hello", "Hello signed in")
         authed.fetcher.ok(Ao3Urls.chapter(1, 10), signedInHtml)
         val repo = h.signedInRepo(authed, sink)
-        val pages = mutableListOf<String>()
-        repo.visitInBackground(1, ref) { pages += it }
-        repo.visitInBackground(1, ref) { pages += it }   // within the debounce window: no second visit
+        repo.visitInBackground(1, ref)
+        repo.visitInBackground(1, ref)   // within the debounce window: no second visit
         advanceUntilIdle()
         assertEquals(listOf(Ao3Urls.chapter(1, 10).toString()), authed.fetcher.calls)
         assertEquals(listOf(false), authed.fetcher.interactives)
         assertEquals(listOf(true), authed.fetcher.forceNetworks)
         assertEquals(listOf(1L to Ao3Urls.chapter(1, 10).toString()), sink.updates)
-        assertEquals(listOf(signedInHtml), pages)
         assertEquals(signedInHtml, h.cache.get(1, "10"))
         assertTrue(h.fetcher.calls.isEmpty())
         h.now += WorkRepository.VISIT_DEBOUNCE_MS
