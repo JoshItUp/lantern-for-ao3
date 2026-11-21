@@ -7,7 +7,8 @@ import org.jsoup.nodes.Element
 data class AccountState(val signedIn: Boolean, val username: String?)
 
 object AccountParser {
-    private val userHref = Regex("^(?:https?://[^/]+)?/users/([^/?#]+)/?(?:[?#].*)?$")
+    /** A `/users/{name}` link (with or without the host); group 1 is the URL-encoded name. */
+    internal val userHref = Regex("^(?:https?://[^/]+)?/users/([^/?#]+)/?(?:[?#].*)?$")
     private val notNames = setOf("login", "logout")
 
     /** Signed in = a `/users/<name>` link directly inside `#greeting`; deeper paths (e.g. /users/x/pseuds/y) are skipped. */
@@ -19,12 +20,7 @@ object AccountParser {
             for (a in greeting.select("a[href]")) {
                 val name = userHref.find(a.attr("href"))?.groupValues?.get(1) ?: continue
                 if (name in notNames) continue
-                val decoded = try {
-                    java.net.URLDecoder.decode(name.replace("+", "%2B"), "UTF-8")
-                } catch (e: IllegalArgumentException) {
-                    name
-                }
-                return AccountState(true, decoded)
+                return AccountState(true, decodeUser(name))
             }
         }
         return AccountState(false, null)
@@ -43,6 +39,13 @@ object AccountParser {
         val loginLink = header.select("a[href]").any { a: Element -> isLoginPath(a.attr("href")) }
         val loginForm = header.select("form[action]").any { f: Element -> isLoginPath(f.attr("action")) }
         return if (loginLink || loginForm) AccountState(false, null) else null
+    }
+
+    /** A [userHref] name decoded ("+" kept as is); the raw text when it isn't valid percent-encoding. */
+    internal fun decodeUser(s: String): String = try {
+        java.net.URLDecoder.decode(s.replace("+", "%2B"), "UTF-8")
+    } catch (_: IllegalArgumentException) {
+        s
     }
 
     private fun isLoginPath(href: String): Boolean =

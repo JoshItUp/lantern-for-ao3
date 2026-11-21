@@ -72,13 +72,16 @@ object ChapterParser {
         val authorAnchors: List<Element> = byline?.select("a[rel=author]").orEmpty()
         val authors = authorAnchors.map { it.text().trim() }.filter { it.isNotEmpty() }
             .ifEmpty { listOfNotNull(byline?.text()?.trim()?.takeIf { it.isNotEmpty() }) }
-        // Work meta (outside #workskin): "Part N of <series>", one span.position per series.
-        val series = doc.select("dl.work.meta dd.series span.position").mapNotNull { pos: Element ->
-            val part = pos.ownText().substringAfter("Part", "").trim().substringBefore(' ').toIntOrNull()
-            val a: Element = pos.selectFirst("a[href]") ?: return@mapNotNull null
-            Links.series(a, part)
-        }
+        // Work meta (outside #workskin).
+        val series = seriesLinks(doc.select("dl.work.meta dd.series span.position"))
         return WorkHeader(skin, workPreface, workTitle, authors, authorAnchors.mapNotNull { Links.author(it) }, series)
+    }
+
+    /** The work meta's "Part N of <series>" entries, one `span.position` per series. */
+    internal fun seriesLinks(positions: List<Element>): List<SeriesLink> = positions.mapNotNull { pos: Element ->
+        val part = pos.ownText().substringAfter("Part", "").trim().substringBefore(' ').toIntOrNull()
+        val a: Element = pos.selectFirst("a[href]") ?: return@mapNotNull null
+        Links.series(a, part)
     }
 
     /** The id in a chapter preface's `h3.title` link to `/chapters/{id}`. */

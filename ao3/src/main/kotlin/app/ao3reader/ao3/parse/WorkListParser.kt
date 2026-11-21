@@ -17,8 +17,6 @@ object WorkListParser {
         return WorkListPage(BlurbParser.parsePage(doc, page), seriesTitle(doc))
     }
 
-    fun seriesTitle(html: String): String? = seriesTitle(Jsoup.parse(html))
-
     private fun seriesTitle(doc: Document): String? {
         if (doc.selectFirst("#main.series-show, ul.series.work.index") == null) return null
         return doc.selectFirst("#main h2.heading")?.text()?.trim()?.ifEmpty { null }
