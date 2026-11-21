@@ -55,6 +55,10 @@ interface DownloadDao {
     @Query("UPDATE DownloadEntity SET job = :job, failure = :failure WHERE workId = :workId")
     suspend fun setJob(workId: Long, job: DownloadJob, failure: String?)
 
+    /** Rows a dead process left mid-download. */
+    @Query("UPDATE DownloadEntity SET job = 'FAILED', failure = :failure WHERE job = 'DOWNLOADING'")
+    suspend fun failDownloading(failure: String)
+
     @Query("UPDATE DownloadEntity SET chaptersPostedRemote = :posted WHERE workId = :workId")
     suspend fun setPostedRemote(workId: Long, posted: Int)
 
