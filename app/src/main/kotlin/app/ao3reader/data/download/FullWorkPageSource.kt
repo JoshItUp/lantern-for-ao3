@@ -25,9 +25,7 @@ class FullWorkPageSource(
         val url = Ao3Urls.fullWork(workId)
         var result = fetcher.get(url, interactive = interactive, anonymous = true)
         var meta = parseOk(result, workId, sink)
-        var retried = false
-        if (meta == null && authed?.isActing() == true) {
-            retried = true
+        if (meta == null && result is FetchResult.Ok && authed?.isActing() == true) {
             result = authed.get(url, interactive, forceNetwork = true)
             meta = parseOk(result, workId, sink)
         }
