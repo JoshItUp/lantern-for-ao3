@@ -32,7 +32,7 @@ internal object Links {
     fun series(a: Element, part: Int?): SeriesLink? {
         val seg = resolve(a)?.pathSegments ?: return null
         if (seg.size != 2 || seg[0] != "series") return null
-        val id = seg[1].toLongOrNull() ?: return null
+        val id = seg[1].takeIf { s -> s.isNotEmpty() && s.all { it in '0'..'9' } }?.toLongOrNull() ?: return null
         return SeriesLink(id, a.text().trim(), part)
     }
 }

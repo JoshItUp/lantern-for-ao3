@@ -71,7 +71,7 @@ object Ao3Urls {
     fun workList(url: HttpUrl): HttpUrl? {
         if (url.scheme != "https" || url.host != HOST || url.port != 443) return null
         if (url.username.isNotEmpty() || url.password.isNotEmpty()) return null
-        val seg = url.pathSegments
+        val seg = url.pathSegments.let { if (it.size > 1 && it.last().isEmpty()) it.dropLast(1) else it }
         return when {
             seg.size == 2 && seg[0] == "series" -> seg[1].takeIf { s -> s.isNotEmpty() && s.all { it in '0'..'9' } }
                 ?.toLongOrNull()?.let(::series)

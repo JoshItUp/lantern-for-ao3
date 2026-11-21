@@ -26,7 +26,7 @@ enum class LibrarySection { HISTORY, MARKED_FOR_LATER, BOOKMARKS, SUBSCRIPTIONS 
 /** Returned (inside [FetchResult.Failed]) when a library call is made without a signed-in account. */
 class NotSignedInException : IllegalStateException("not signed in")
 
-private val libraryJson = Json { ignoreUnknownKeys = true }
+internal val libraryJson = Json { ignoreUnknownKeys = true }
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class LibraryRepository(

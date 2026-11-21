@@ -14,11 +14,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.ViewConfiguration
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -140,30 +144,43 @@ fun WorkCard(
 
 private val LinkShape = RoundedCornerShape(4.dp)
 
+/** Vertical hit padding of a link; the line is this much taller than plain text, so neighbours are not stolen from. */
+private val LinkPadV = 6.dp
+private val LinkPadH = 2.dp
+
+private class NoMinTouchTarget(private val d: ViewConfiguration) : ViewConfiguration by d {
+    override val minimumTouchTargetSize: DpSize get() = DpSize.Zero
+}
+
 /**
  * "[prefix] A, B": each link with a URL is its own tap target (the card's tap is untouched around it);
- * links without one (anonymous, orphaned, the list on screen) are plain text. The text is small, but
- * Compose widens a touch target smaller than the 48 dp minimum when hit testing (ViewConfiguration
- * minimumTouchTargetSize), so the line keeps its height and stays easy to hit.
+ * links without one (anonymous, orphaned, the list on screen) are plain text. The automatic 48 dp
+ * touch-target expansion is switched off here (it would steal taps from the title and fandom lines
+ * above and below); instead each link carries an explicit symmetric padding as its hit area.
  */
 @Composable
 fun LinkLine(prefix: String?, links: List<WorkLink>, style: TextStyle, color: Color, onOpen: OpenWorkList) {
     val linkColor = MaterialTheme.colorScheme.onSurface
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (prefix != null) Text(prefix, style = style, color = color, modifier = Modifier.padding(vertical = 2.dp))
-        links.forEachIndexed { i, l ->
-            val text = if (i < links.lastIndex) l.label + "," else l.label
-            val url = l.url
-            if (url == null) {
-                Text(text, style = style, color = color, modifier = Modifier.padding(vertical = 2.dp))
-            } else {
-                Text(
-                    text, style = style, color = linkColor, fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .clip(LinkShape)
-                        .clickable(role = Role.Button, onClickLabel = l.title) { onOpen(url, l.title) }
-                        .padding(vertical = 2.dp),
-                )
+    val vc = LocalViewConfiguration.current
+    val noMin = remember(vc) { NoMinTouchTarget(vc) }
+    CompositionLocalProvider(LocalViewConfiguration provides noMin) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            val plain = Modifier.padding(vertical = LinkPadV, horizontal = LinkPadH)
+            if (prefix != null) Text(prefix, style = style, color = color, modifier = plain)
+            links.forEachIndexed { i, l ->
+                val text = if (i < links.lastIndex) l.label + "," else l.label
+                val url = l.url
+                if (url == null) {
+                    Text(text, style = style, color = color, modifier = plain)
+                } else {
+                    Text(
+                        text, style = style, color = linkColor, fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .clip(LinkShape)
+                            .clickable(role = Role.Button, onClickLabel = l.title) { onOpen(url, l.title) }
+                            .padding(vertical = LinkPadV, horizontal = LinkPadH),
+                    )
+                }
             }
         }
     }
