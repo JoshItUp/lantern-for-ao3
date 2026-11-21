@@ -13,6 +13,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
@@ -24,6 +26,8 @@ interface ChapterSource {
     suspend fun chapters(workId: Long): Loaded<List<ChapterRef>>
     suspend fun chapter(workId: Long, ref: ChapterRef): Loaded<ChapterContent>
     fun prefetch(workId: Long, ref: ChapterRef)
+    /** Longer chapter lists found after [chapters] returned (a downloaded work's online list); none by default. */
+    fun listUpdates(workId: Long): Flow<List<ChapterRef>> = emptyFlow()
 }
 
 /** An Ok response that has no chapter text (e.g. AO3's sign-in page for a registered-users-only work). */
@@ -60,8 +64,14 @@ class WorkRepository(
     }
     /** Prefetches running now, by "workId/key"; [chapter] waits for one rather than fetching the same page twice. */
     private val inFlight = ConcurrentHashMap<String, Job>()
-    /** When each chapter ("workId/key") was last visited signed in; debounces [visit]. */
+    /** When each chapter ("workId/key") was last visited signed in; debounces [visitInBackground]. */
     private val lastVisit = ConcurrentHashMap<String, Long>()
+
+    /**
+     * Gets every signed-in chapter page this repository receives (foreground loads and background visits;
+     * never anonymous loads or prefetches). Called on a background thread; must return quickly.
+     */
+    @Volatile var onChapterPage: ((workId: Long, html: String) -> Unit)? = null
 
     /**
      * Memoized for [CHAPTER_LIST_TTL_MS], so a work in progress picks up new chapters. An expired list
@@ -95,7 +105,7 @@ class WorkRepository(
             val parsed = parseValid(cached, workId)
             if (parsed != null) {
                 // Shown from the cache at once; the History visit goes out in the background.
-                if (signedIn != null) visit(signedIn, workId, ref)
+                if (signedIn != null) visitInBackground(workId, ref)
                 return Loaded.Ok(parsed)
             }
             withContext(ioDispatcher) { cache.remove(workId, key) }
@@ -109,16 +119,21 @@ class WorkRepository(
         val parsed = parseValid(r.html, workId)
             ?: return Loaded.Error(FetchResult.Failed(NotAChapterPageException()))
         withContext(ioDispatcher) { try { cache.put(workId, key, r.html) } catch (_: IOException) {} }
-        if (signedIn != null) feedActions(workId, r)
+        if (signedIn != null) {
+            feedActions(workId, r)
+            notePage(workId, r.html)
+        }
         return Loaded.Ok(parsed)
     }
 
     /**
-     * A background signed-in GET of a chapter shown from the cache, so it appears in the owner's AO3
-     * History. Its page feeds [actions] and refreshes the cache entry; the reader is not re-rendered.
+     * A background signed-in GET of a chapter shown without a fetch (from the cache or a download), so it
+     * appears in the owner's AO3 History. Its page feeds [actions], goes to [onPage] and [onChapterPage], and
+     * refreshes the chapter-cache entry; the reader is not re-rendered. Nothing while no account acts.
      * At most one per chapter within [VISIT_DEBOUNCE_MS].
      */
-    private fun visit(signedIn: AuthedFetch, workId: Long, ref: ChapterRef) {
+    fun visitInBackground(workId: Long, ref: ChapterRef, onPage: (html: String) -> Unit = {}) {
+        val signedIn = authed?.takeIf { it.isActing() } ?: return
         val key = keyOf(ref)
         val fk = flightKey(workId, key)
         val now = clock()
@@ -138,11 +153,18 @@ class WorkRepository(
                 if (parseValid(r.html, workId) != null) {
                     withContext(ioDispatcher) { try { cache.put(workId, key, r.html) } catch (_: IOException) {} }
                 }
+                notePage(workId, r.html)
+                onPage(r.html)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
             }
         }
+    }
+
+    private fun notePage(workId: Long, html: String) {
+        val hook = onChapterPage ?: return
+        try { hook(workId, html) } catch (e: CancellationException) { throw e } catch (_: Exception) {}
     }
 
     private suspend fun feedActions(workId: Long, r: FetchResult.Ok) {

@@ -28,6 +28,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import app.ao3reader.data.db.AppDatabase
 import app.ao3reader.data.db.MIGRATION_2_3
+import app.ao3reader.ao3.parse.WorkMetaParser
+import app.ao3reader.data.ChapterSource
+import app.ao3reader.data.download.DownloadAwareChapterSource
 import app.ao3reader.data.download.DownloadRepository
 import app.ao3reader.data.download.DownloadStore
 import app.ao3reader.data.download.DownloadWorker
@@ -128,7 +131,17 @@ class AppContainer(val context: Context) {
             fetcher, chapterCache, appScope,
             authed = authedFetch,
             actions = { workId, html, pageUrl -> actionRepo.update(workId, html, pageUrl) },
-        )
+        ).also { repo ->
+            // A signed-in chapter page carries AO3's posted-chapter count: "N new chapters" for downloaded works.
+            repo.onChapterPage = { workId, html ->
+                appScope.launch { WorkMetaParser.postedChapters(html)?.let { downloadRepo.notePostedRemote(workId, it) } }
+            }
+        }
+    }
+
+    /** What the reader reads through: a downloaded work's stored chapters, everything else online via [workRepo]. */
+    val chapterSource: ChapterSource by lazy {
+        DownloadAwareChapterSource(workRepo, db.downloadDao(), downloadStore, downloadRepo, appScope, authedFetch::isActing)
     }
 
     val libraryRepo: LibraryRepository by lazy { LibraryRepository(session, db) }
