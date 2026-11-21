@@ -72,7 +72,10 @@ data class WorkListUiState(
     val downloadedIds: Set<Long> = emptySet(),
 )
 
-/** The header's Subscribe / Unsubscribe button for a series or author. */
+/**
+ * The header's Subscribe / Unsubscribe button for a series or author. A series page carries the
+ * subscribe state; an author's is read on the first tap.
+ */
 @Immutable
 data class ListSubscribeUi(
     /** False: no button. */

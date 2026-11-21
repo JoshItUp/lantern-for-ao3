@@ -40,9 +40,9 @@ import androidx.compose.ui.unit.dp
 import app.ao3reader.data.db.DownloadEntity
 import app.ao3reader.data.db.DownloadJob
 import app.ao3reader.data.db.ProgressEntity
+import app.ao3reader.ui.common.Hint
 import app.ao3reader.ui.search.WorkCard
 import app.ao3reader.ui.search.badgeText
-import app.ao3reader.ui.common.Hint
 import app.ao3reader.ui.theme.WarningColor
 
 private val RowShape = RoundedCornerShape(16.dp)

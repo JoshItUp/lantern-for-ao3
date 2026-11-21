@@ -268,6 +268,7 @@ class SessionTest {
         assertEquals(FetchResult.Failed(null), s.authedGet(page))
         assertTrue(fake.posts.isEmpty())
         assertTrue(s.state.value.signedIn)
+        assertEquals(listOf(null, null), fake.accepts)
     }
 
     @Test fun `concurrent callers share one re-login`() = runTest {
