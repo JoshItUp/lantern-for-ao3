@@ -49,11 +49,9 @@ object BlurbParser {
             .firstOrNull { q -> q.parents().none { it.tagName() == "div" && it.hasClass("user") && it.hasClass("module") } }
             ?.html()?.trim()?.ifEmpty { null }
 
-        fun stat(cls: String): Element? = li.selectFirst("dl.stats dd.$cls")
-        fun num(cls: String): Int? = stat(cls)?.text()?.replace(",", "")?.trim()?.toIntOrNull()
-        val chapters = stat("chapters")?.text()?.trim()?.split("/")
-        val posted = chapters?.getOrNull(0)?.replace(",", "")?.trim()?.toIntOrNull()
-        val total = chapters?.getOrNull(1)?.replace(",", "")?.trim()?.toIntOrNull()
+        fun stat(cls: String): Element? = stat(li, cls)
+        fun num(cls: String): Int? = statNum(li, cls)
+        val (posted, total) = chapterCounts(li)
 
         return WorkBlurb(
             workId = workId, title = title, authors = authors, fandoms = fandoms,
@@ -69,5 +67,17 @@ object BlurbParser {
                 Links.series(a, s.selectFirst("strong")?.text()?.trim()?.toIntOrNull())
             },
         )
+    }
+
+    /** The `dd.{cls}` of the `dl.stats` inside [scope] (a blurb, or a work page's meta). */
+    internal fun stat(scope: Element, cls: String): Element? = scope.selectFirst("dl.stats dd.$cls")
+
+    internal fun statNum(scope: Element, cls: String): Int? = stat(scope, cls)?.text()?.replace(",", "")?.trim()?.toIntOrNull()
+
+    /** "7/12" -> 7 to 12; "7/?" -> 7 to null; either null when absent. */
+    internal fun chapterCounts(scope: Element): Pair<Int?, Int?> {
+        val parts = stat(scope, "chapters")?.text()?.trim()?.split("/")
+        fun n(i: Int) = parts?.getOrNull(i)?.replace(",", "")?.trim()?.toIntOrNull()
+        return n(0) to n(1)
     }
 }

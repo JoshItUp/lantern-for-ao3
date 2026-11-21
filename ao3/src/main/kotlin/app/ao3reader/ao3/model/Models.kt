@@ -1,5 +1,6 @@
 package app.ao3reader.ao3.model
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -71,25 +72,38 @@ data class SeriesLink(val id: Long, val title: String, val part: Int? = null)
 
 data class WorkPage(val works: List<WorkBlurb>, val page: Int, val hasNext: Boolean)
 
+@Serializable
 data class ChapterRef(val chapterId: Long?, val number: Int, val title: String)   // chapterId null for single-chapter works
 
+@Serializable
 sealed interface Span {
     val start: Int
     val end: Int
+    @Serializable @SerialName("bold")
     data class Bold(override val start: Int, override val end: Int) : Span
+    @Serializable @SerialName("italic")
     data class Italic(override val start: Int, override val end: Int) : Span
+    @Serializable @SerialName("underline")
     data class Underline(override val start: Int, override val end: Int) : Span
+    @Serializable @SerialName("strike")
     data class Strike(override val start: Int, override val end: Int) : Span
+    @Serializable @SerialName("link")
     data class Link(override val start: Int, override val end: Int, val url: String) : Span
 }
 
+@Serializable
 sealed interface Block {
+    @Serializable @SerialName("text")
     data class Text(val text: String, val spans: List<Span>, val center: Boolean = false) : Block
+    @Serializable @SerialName("heading")
     data class Heading(val text: String, val level: Int) : Block
+    @Serializable @SerialName("quote")
     data class Quote(val text: String, val spans: List<Span>) : Block
+    @Serializable @SerialName("rule")
     data object Rule : Block
 }
 
+@Serializable
 data class ChapterContent(
     val workId: Long, val ref: ChapterRef, val workTitle: String,
     val authors: List<String>, val beginNotes: List<Block>, val body: List<Block>, val endNotes: List<Block>,
