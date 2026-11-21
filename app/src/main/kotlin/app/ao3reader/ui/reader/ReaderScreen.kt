@@ -107,7 +107,9 @@ private const val FLING_VELOCITY_DP = 800f
 /** Resistance applied to drags that can't change chapter (first/last). */
 private const val EDGE_RESISTANCE = 0.2f
 /** The bottom controls bar's height above the navigation-bar inset. */
-private val BOTTOM_BAR_HEIGHT = 64.dp
+private val ACTION_ROW_HEIGHT = 64.dp
+private val DOWNLOAD_SLOT_HEIGHT = 44.dp
+private val BOTTOM_BAR_HEIGHT = ACTION_ROW_HEIGHT + DOWNLOAD_SLOT_HEIGHT
 
 /**
  * [onBack] pops the reader. Back is handled here with a plain (non-predictive) callback, so there is
@@ -125,6 +127,10 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit, onOpenWorkList: OpenWo
     // One stable slot for every chapter footer: the row inside collects the actions itself, so an
     // action never recomposes the chapter LazyColumn.
     val footerActions: @Composable () -> Unit = remember(vm) { { ReaderActionRow(vm, onSignIn = { account() }) } }
+    // The download slot: the footer shows the new-chapters line only at the last stored chapter; the bar always does.
+    val footerDownload: @Composable (Boolean) -> Unit = remember(vm) { { showNew -> DownloadSlot(vm, showNew, inBar = false) } }
+    val barDownload: @Composable () -> Unit = remember(vm) { { DownloadSlot(vm, showNewChapters = true, inBar = true) } }
+    val lastStored = s.download?.takeIf { it.hasCopy }?.chaptersStored?.minus(1) ?: -1
 
     val bars = ImmersiveMode(hidden = !s.controlsVisible)
     FlushOnStop(vm)
@@ -202,6 +208,8 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit, onOpenWorkList: OpenWo
                             onRetry = vm::retry,
                             onOpenWorkList = onOpenWorkList,
                             footerActions = footerActions,
+                            footerDownload = footerDownload,
+                            atLastStored = page.index == lastStored,
                         )
                     }
                 }
@@ -226,7 +234,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit, onOpenWorkList: OpenWo
                 exit = fadeOut() + slideOutVertically { it },
                 modifier = Modifier.align(Alignment.BottomCenter),
             ) {
-                ReaderBottomBar { footerActions() }
+                ReaderBottomBar(download = barDownload, actions = footerActions)
             }
 
             // Above the bottom bar while it shows; the inset ignores visibility so nothing jumps.
@@ -340,6 +348,8 @@ private fun ChapterPane(
     onRetry: () -> Unit,
     onOpenWorkList: OpenWorkList,
     footerActions: @Composable () -> Unit,
+    footerDownload: @Composable (Boolean) -> Unit,
+    atLastStored: Boolean,
 ) {
     val content = page.content
     // Text that was ready when the pane appeared shows at once; text that arrives later fades in instead of popping.
@@ -349,7 +359,7 @@ private fun ChapterPane(
     }
     when {
         content != null -> Box(Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha.value }) {
-            ChapterText(content, isCurrent, isLast, restore, style, onRestored, onScroll, onNext, onOpenWorkList, footerActions)
+            ChapterText(content, isCurrent, isLast, restore, style, onRestored, onScroll, onNext, onOpenWorkList, footerActions, footerDownload, atLastStored)
         }
         page.error != null -> ErrorMessage(page.error, onRetry)
         // Empty background until the load has taken SPINNER_DELAY_MS, so cached swipes never flash a spinner.
@@ -371,6 +381,8 @@ private fun ChapterText(
     onNext: () -> Unit,
     onOpenWorkList: OpenWorkList,
     footerActions: @Composable () -> Unit,
+    footerDownload: @Composable (Boolean) -> Unit,
+    atLastStored: Boolean,
 ) {
     val listState = rememberLazyListState()
     val report by rememberUpdatedState(if (isCurrent) onScroll else null)
@@ -418,7 +430,7 @@ private fun ChapterText(
         blocks("body", content.body, style, text)
         if (content.endNotes.isNotEmpty()) item(key = "end-rule") { NoteRule() }
         blocks("end", content.endNotes, noteStyle, dim)
-        item(key = "footer") { ChapterFooter(isLast, onNext, footerActions) }
+        item(key = "footer") { ChapterFooter(isLast, onNext, footerActions, footerDownload, atLastStored) }
     }
 }
 
@@ -459,12 +471,19 @@ private fun NoteRule() {
 
 /** The same action row as the controls, then the way on. */
 @Composable
-private fun ChapterFooter(isLast: Boolean, onNext: () -> Unit, actions: @Composable () -> Unit) {
+private fun ChapterFooter(
+    isLast: Boolean,
+    onNext: () -> Unit,
+    actions: @Composable () -> Unit,
+    download: @Composable (Boolean) -> Unit,
+    atLastStored: Boolean,
+) {
     Column(
         Modifier.fillMaxWidth().padding(top = 32.dp, bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         actions()
+        download(atLastStored)
         Spacer(Modifier.height(16.dp))
         if (isLast) {
             Text("End of work", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -477,14 +496,12 @@ private fun ChapterFooter(isLast: Boolean, onNext: () -> Unit, actions: @Composa
 /** The controls' bottom bar: the action row on the same translucent surface as the top bar. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ReaderBottomBar(content: @Composable () -> Unit) {
+private fun ReaderBottomBar(download: @Composable () -> Unit, actions: @Composable () -> Unit) {
     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), modifier = Modifier.fillMaxWidth()) {
-        Box(
-            Modifier
-                .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility)
-                .height(BOTTOM_BAR_HEIGHT),
-            contentAlignment = Alignment.Center,
-        ) { content() }
+        Column(Modifier.windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility)) {
+            Box(Modifier.height(DOWNLOAD_SLOT_HEIGHT), contentAlignment = Alignment.Center) { download() }
+            Box(Modifier.height(ACTION_ROW_HEIGHT), contentAlignment = Alignment.Center) { actions() }
+        }
     }
 }
 
@@ -499,8 +516,11 @@ private fun ErrorMessage(error: FetchResult, onRetry: () -> Unit) {
             readerErrorText(error),
             style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(12.dp))
-        Button(onClick = onRetry) { Text("Retry") }
+        // Nothing to retry for a chapter that was never downloaded; other chapters still swipe (the swiper sits above this).
+        if (!isNotDownloaded(error)) {
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onRetry) { Text("Retry") }
+        }
     }
 }
 

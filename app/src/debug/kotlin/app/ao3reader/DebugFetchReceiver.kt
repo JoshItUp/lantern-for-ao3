@@ -7,7 +7,10 @@ import android.util.Log
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
-/** Debug-only: `am broadcast -a app.ao3reader.DEBUG_FETCH --es path "/users/X/readings"` fetches signed in. */
+/**
+ * Debug-only: `am broadcast -a app.ao3reader.DEBUG_FETCH --es path "/users/X/readings"` fetches signed in;
+ * add `--ez anon true` to fetch signed out.
+ */
 class DebugFetchReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != "app.ao3reader.DEBUG_FETCH") return
@@ -25,7 +28,12 @@ class DebugFetchReceiver : BroadcastReceiver() {
                     if (url == null || url.host != "archiveofourown.org") {
                         Log.w(TAG, "rejected path")
                     } else {
-                        val r = container.session.authedGet(url, interactive = false)
+                        // --ez anon true: fetched signed out (no History visit), e.g. to capture a work page.
+                        val r = if (intent.getBooleanExtra("anon", false)) {
+                            container.fetcher.get(url, interactive = false, anonymous = true)
+                        } else {
+                            container.session.authedGet(url, interactive = false)
+                        }
                         Log.i(TAG, r::class.java.simpleName)
                     }
                 }

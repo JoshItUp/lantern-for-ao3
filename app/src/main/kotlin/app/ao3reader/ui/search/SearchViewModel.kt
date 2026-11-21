@@ -58,6 +58,8 @@ data class SearchUiState(
     val continueReading: ProgressEntity? = null,
     val progressByWork: Map<Long, ProgressEntity> = emptyMap(),
     val readMarks: Set<Long> = emptySet(),
+    /** Works with a stored download (the card's "⤓"). */
+    val downloadedIds: Set<Long> = emptySet(),
     /** Summary of each shown work, converted once off the main thread. */
     val summaries: Map<Long, List<Block>> = emptyMap(),
     /** Author and series links of each shown work, built with the summaries. */
@@ -75,6 +77,7 @@ class SearchViewModel(
     private val progressDao: ProgressDao,
     private val readMarkDao: ReadMarkDao,
     private val parseDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val downloadedIds: Flow<Set<Long>> = flowOf(emptySet()),
 ) : ViewModel() {
     private val _state = MutableStateFlow(SearchUiState())
     val state: StateFlow<SearchUiState> = _state.asStateFlow()
@@ -90,6 +93,9 @@ class SearchViewModel(
     init {
         viewModelScope.launch {
             presetDao.observeAll().collect { list -> _state.update { it.copy(presets = list) } }
+        }
+        viewModelScope.launch {
+            downloadedIds.distinctUntilChanged().collect { ids -> _state.update { it.copy(downloadedIds = ids) } }
         }
         viewModelScope.launch {
             progressDao.observeLatest().collect { p -> _state.update { it.copy(continueReading = p) } }
@@ -268,6 +274,7 @@ class SearchViewModel(
                     container.db.presetDao(),
                     container.db.progressDao(),
                     container.db.readMarkDao(),
+                    downloadedIds = container.downloadRepo.downloadedIds(),
                 )
             }
         }

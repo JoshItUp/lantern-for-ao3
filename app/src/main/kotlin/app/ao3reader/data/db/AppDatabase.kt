@@ -7,9 +7,9 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [PresetEntity::class, ProgressEntity::class, ReadMarkEntity::class, LibraryPageEntity::class],
-    version = 3,
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    entities = [PresetEntity::class, ProgressEntity::class, ReadMarkEntity::class, LibraryPageEntity::class, DownloadEntity::class, DownloadChapterEntity::class],
+    version = 4,
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 3, to = 4)],
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -17,6 +17,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun progressDao(): ProgressDao
     abstract fun readMarkDao(): ReadMarkDao
     abstract fun libraryPageDao(): LibraryPageDao
+    abstract fun downloadDao(): DownloadDao
 }
 
 /** The cache is keyed by account now; it holds nothing worth keeping, so it is dropped and recreated. */

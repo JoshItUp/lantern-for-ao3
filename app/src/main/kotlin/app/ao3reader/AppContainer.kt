@@ -1,6 +1,7 @@
 package app.ao3reader
 
 import android.content.Context
+import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import androidx.webkit.WebViewCompat
@@ -23,9 +24,19 @@ import app.ao3reader.data.WorkRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import app.ao3reader.data.db.AppDatabase
 import app.ao3reader.data.db.MIGRATION_2_3
+import app.ao3reader.ao3.parse.WorkMetaParser
+import app.ao3reader.data.ChapterSource
+import app.ao3reader.data.download.DownloadAwareChapterSource
+import app.ao3reader.data.download.DownloadRepository
+import app.ao3reader.data.download.DownloadStore
+import app.ao3reader.data.download.DownloadWorker
+import app.ao3reader.data.download.Downloader
+import app.ao3reader.data.download.FullWorkPageSource
 import app.ao3reader.net.AnonymousCookieInterceptor
 import app.ao3reader.net.DeferredFetcher
 import app.ao3reader.net.PersistentCookieJar
@@ -108,17 +119,35 @@ class AppContainer(val context: Context) {
 
     val searchRepo: SearchRepository by lazy { SearchRepository(fetcher) }
 
+    /** Signed-in fetches through [session], for chapters and downloads. */
+    val authedFetch: AuthedFetch = object : AuthedFetch {
+        override fun isActing() = session.actingAccount.value != null
+        override suspend fun get(url: HttpUrl, interactive: Boolean, forceNetwork: Boolean) =
+            session.authedGet(url, interactive = interactive, forceNetwork = forceNetwork)
+    }
+
     /** Chapters a signed-in owner opens are fetched (or visited) signed in, for AO3 History; prefetches go signed out. */
     val workRepo: WorkRepository by lazy {
         WorkRepository(
             fetcher, chapterCache, appScope,
-            authed = object : AuthedFetch {
-                override fun isActing() = session.actingAccount.value != null
-                override suspend fun get(url: HttpUrl, interactive: Boolean, forceNetwork: Boolean) =
-                    session.authedGet(url, interactive = interactive, forceNetwork = forceNetwork)
-            },
+            authed = authedFetch,
             actions = { workId, html, pageUrl -> actionRepo.update(workId, html, pageUrl) },
-        )
+        ).also { repo ->
+            // A signed-in chapter page carries AO3's posted-chapter count: "N new chapters" for downloaded works.
+            repo.onChapterPage = { workId, html ->
+                appScope.launch {
+                    // Checked first: parsing builds a second full DOM, wasted on works that aren't downloaded.
+                    if (db.downloadDao().get(workId)?.hasCopy == true) {
+                        WorkMetaParser.postedChapters(html)?.let { downloadRepo.notePostedRemote(workId, it) }
+                    }
+                }
+            }
+        }
+    }
+
+    /** What the reader reads through: a downloaded work's stored chapters, everything else online via [workRepo]. */
+    val chapterSource: ChapterSource by lazy {
+        DownloadAwareChapterSource(workRepo, db.downloadDao(), downloadStore, downloadRepo, appScope, authedFetch::isActing)
     }
 
     val libraryRepo: LibraryRepository by lazy { LibraryRepository(session, db) }
@@ -135,5 +164,32 @@ class AppContainer(val context: Context) {
             { session.actingAccount.value != null }, { session.authedGet(it) }, { fetcher.get(it) },
             signedInPage = { list, html, pageUrl -> actionRepo.updateList(list, html, pageUrl) },
         )
+    }
+
+    /** Downloaded works; app data, never cache (clearing the chapter cache or signing out never touches them). */
+    val downloadStore: DownloadStore by lazy {
+        DownloadStore(File(context.filesDir, "downloads"), db.downloadDao(), Json { ignoreUnknownKeys = true }, Dispatchers.IO)
+    }
+
+    /** The worker's downloader; one at a time, through the shared [fetcher]. */
+    val downloader: Downloader by lazy {
+        Downloader(listOf(FullWorkPageSource(fetcher, authedFetch, Dispatchers.IO)), downloadStore, db.downloadDao())
+    }
+
+    val downloadRepo: DownloadRepository by lazy {
+        DownloadRepository(db.downloadDao(), downloadStore, { DownloadWorker.enqueue(context) })
+    }
+
+    init {
+        // Before the worker or any queue call runs: clear leftover temp dirs and fail rows a dead process left.
+        // A failed clean-up must not crash the app; [DownloadRepository.ready] completes either way.
+        appScope.launch {
+            runCatching { downloadRepo.startup() }
+                .onFailure { e -> Log.w(TAG, "download startup failed: ${e::class.java.simpleName}") }
+        }
+    }
+
+    private companion object {
+        const val TAG = "AppContainer"
     }
 }

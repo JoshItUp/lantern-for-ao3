@@ -18,6 +18,9 @@ object Ao3Urls {
         return path.toHttpUrl().newBuilder().addQueryParameter("view_adult", "true").build()
     }
 
+    /** Every posted chapter of the work on one page. */
+    fun fullWork(workId: Long): HttpUrl = "$BASE/works/$workId?view_full_work=true".toHttpUrl()
+
     fun login(): HttpUrl = "$BASE/users/login".toHttpUrl()
 
     /** GET shows a confirmation form; the form (or a DELETE override with the page's CSRF token) logs out. */

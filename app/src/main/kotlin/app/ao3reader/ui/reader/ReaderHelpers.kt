@@ -2,6 +2,7 @@ package app.ao3reader.ui.reader
 
 import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.data.NotAChapterPageException
+import app.ao3reader.data.download.NotDownloadedException
 
 /** The reader's message for a failed load; every one is shown with a Retry button. */
 internal fun readerErrorText(error: FetchResult): String = when {
@@ -10,8 +11,13 @@ internal fun readerErrorText(error: FetchResult): String = when {
     error is FetchResult.NotFound -> "This work isn't available (deleted or hidden)."
     // An Ok page without chapter text: in practice AO3's sign-in page for registered-users-only works.
     error is FetchResult.Failed && error.cause is NotAChapterPageException -> "This work isn't available signed out."
+    // A chapter the download doesn't have, while AO3 can't be reached.
+    error is FetchResult.Failed && error.cause is NotDownloadedException -> "Not downloaded · Update when online"
     else -> "Couldn't load this chapter."
 }
+
+/** A chapter the download doesn't have while AO3 can't be reached: nothing to retry, other chapters still swipe. */
+internal fun isNotDownloaded(error: FetchResult): Boolean = error is FetchResult.Failed && error.cause is NotDownloadedException
 
 /** Scroll reports while moving are coarsened to this many pixels; the resting position is exact. */
 internal const val SCROLL_BUCKET_PX = 24

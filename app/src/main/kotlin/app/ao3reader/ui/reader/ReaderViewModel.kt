@@ -31,8 +31,11 @@ import kotlinx.coroutines.flow.stateIn
 import app.ao3reader.data.Loaded
 import app.ao3reader.data.ReaderFont
 import app.ao3reader.data.SettingsStore
+import app.ao3reader.data.db.DownloadEntity
 import app.ao3reader.data.db.ProgressDao
 import app.ao3reader.data.db.ProgressEntity
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import app.ao3reader.ui.Routes
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -70,6 +73,8 @@ data class ReaderUiState(
     val chapterListLoaded: Boolean = true,
     /** True once the current load has run for [ReaderViewModel.SPINNER_DELAY_MS]; fast (cached) loads never show a spinner. */
     val showSpinner: Boolean = false,
+    /** This work's download row (null: never downloaded). */
+    val download: DownloadEntity? = null,
 )
 
 /** The account actions for the work being read: what the action row shows. */
@@ -132,6 +137,10 @@ class ReaderViewModel(
     private val clock: () -> Long = System::currentTimeMillis,
     private val actionSource: WorkActionSource? = null,
     private val runner: ActionRunner? = null,
+    /** This work's download row ([app.ao3reader.data.download.DownloadRepository.observe]); null: no downloads. */
+    private val downloadState: Flow<DownloadEntity?>? = null,
+    /** Queues a download ([app.ao3reader.data.download.DownloadRepository.request]); null: no downloads. */
+    private val requestDownload: (suspend (workId: Long, title: String, authors: List<String>) -> Unit)? = null,
 ) : ViewModel() {
     /**
      * The chapter to open: the handle's values when it has them (on a fresh open these are the
@@ -184,6 +193,10 @@ class ReaderViewModel(
         viewModelScope.launch {
             scrollTicks.receiveAsFlow().debounce(SAVE_DEBOUNCE_MS).collect { writePending() }
         }
+        downloadState?.let { flow ->
+            viewModelScope.launch { flow.collect { d -> _state.update { it.copy(download = d) } } }
+        }
+        viewModelScope.launch { source.listUpdates(workId).collect(::applyListUpdate) }
         open()
     }
 
@@ -192,14 +205,49 @@ class ReaderViewModel(
         _state.update { it.copy(loading = true, error = null, content = null) }
         loadJob = viewModelScope.launch {
             saved = progressDao.get(workId)
-            val list = (source.chapters(workId) as? Loaded.Ok)?.value?.takeIf { it.isNotEmpty() }
-            if (list != null) {
-                val index = startIndex(list)
+            val initial = (source.chapters(workId) as? Loaded.Ok)?.value?.takeIf { it.isNotEmpty() }
+            if (initial != null) {
+                // The resume point is past the download: wait briefly for the online list so it opens there
+                // (online), never at chapter 1. Offline, the stored list is used.
+                val waited = !targetIn(initial) && downloadState?.first()?.hasCopy == true
+                val list = if (!waited) initial
+                else withTimeoutOrNull(LIST_UPDATE_WAIT_MS) { source.listUpdates(workId).first() }?.takeIf { it.isNotEmpty() } ?: initial
+                val index = if (waited) downloadedStartIndex(list) else startIndex(list)
                 _state.update { it.copy(chapters = list, index = index, chapterListLoaded = true) }
                 loadChapter(index, list[index])
             } else {
                 openWithoutList()
             }
+        }
+    }
+
+    /** Whether the chapter to open (route or restored handle, else saved progress) is in [list]; true when there is none. */
+    private fun targetIn(list: List<ChapterRef>): Boolean {
+        // Null-tolerant: a stored one-shot has no chapter id, while a History route carries AO3's.
+        startChapterId?.let { id -> return list.any { it.matches(id, startNumber) } }
+        saved?.let { p -> return list.any { it.matches(p.chapterId, p.chapterNumber) } }
+        return true
+    }
+
+    /** [startIndex], except that a target past the end of [list] (a download missing new chapters) opens its last chapter. */
+    private fun downloadedStartIndex(list: List<ChapterRef>): Int {
+        if (!targetIn(list)) {
+            val number = if (startChapterId != null) startNumber else saved?.chapterNumber
+            if (number != null && number > list.last().number) return list.lastIndex
+        }
+        return startIndex(list)
+    }
+
+    /** A longer list arrived (a downloaded work's online chapters): adopt it, keeping the chapter being read. */
+    private fun applyListUpdate(list: List<ChapterRef>) {
+        if (list.isEmpty() || list == _state.value.chapters) return
+        _state.update { s ->
+            // Nothing listed yet (open() is still deciding), or only the single-entry fallback: open() owns that.
+            if (s.chapters.isEmpty() || !s.chapterListLoaded) return@update s
+            val current = s.chapters.getOrNull(s.index)
+            val index = current?.let { c -> list.indexOfFirst { it.matches(c.chapterId, c.number) } }?.takeIf { it >= 0 }
+                ?: s.index.coerceAtMost(list.lastIndex)
+            s.copy(chapters = list, index = index)
         }
     }
 
@@ -283,6 +331,26 @@ class ReaderViewModel(
             val ref = s.chapters[s.index]
             loadJob = viewModelScope.launch { loadChapter(s.index, ref) }
         }
+    }
+
+    /** This work's download row alone, so the download slot never recomposes with the chapter text. */
+    val download: StateFlow<DownloadEntity?> = _state.map { it.download }.distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * Download, update or retry. Runs on the app scope ([runner]) so leaving the reader never cancels it;
+     * works signed out (downloads need no account). Nothing happens once the copy is current.
+     */
+    fun onDownload() {
+        val s = _state.value
+        val d = s.download
+        if (downloadLabel(d) == DOWNLOADED_LABEL) return
+        val req = requestDownload ?: return
+        val title = s.content?.workTitle?.takeIf { it.isNotBlank() } ?: d?.title ?: ""
+        val authors = s.content?.authors ?: d?.authors?.split(", ")?.filter { it.isNotEmpty() } ?: emptyList()
+        val block: suspend () -> Unit = { req(workId, title, authors) }
+        val r = runner
+        if (r != null) r.launch(ActionRunner.workKey(workId, "DOWNLOAD"), block) else viewModelScope.launch { block() }
     }
 
     fun toggleControls() = _state.update { it.copy(controlsVisible = !it.controlsVisible) }
@@ -638,6 +706,8 @@ class ReaderViewModel(
     companion object {
         const val SAVE_DEBOUNCE_MS = 500L
         const val SPINNER_DELAY_MS = 350L
+        /** How long a downloaded work whose resume point isn't stored waits for the online chapter list. */
+        const val LIST_UPDATE_WAIT_MS = 8_000L
         const val MIN_FONT_SP = 14
         const val MAX_FONT_SP = 28
         val EMPTY_BOOKMARK = BookmarkInput("", emptyList(), isPrivate = false, isRec = false)
@@ -651,9 +721,11 @@ class ReaderViewModel(
             viewModelFactory {
                 initializer {
                     ReaderViewModel(
-                        workId, chapterId, number, container.workRepo, container.db.progressDao(), container.settings,
+                        workId, chapterId, number, container.chapterSource, container.db.progressDao(), container.settings,
                         savedState = createSavedStateHandle(),
                         actionSource = container.actionRepo, runner = container.actionRunner,
+                        downloadState = container.downloadRepo.observe(workId),
+                        requestDownload = container.downloadRepo::request,
                     )
                 }
             }

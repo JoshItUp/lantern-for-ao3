@@ -271,7 +271,7 @@ fun SearchScreen(
                 WorkCard(
                     work = w,
                     summary = state.summaries[w.workId].orEmpty(),
-                    badge = badgeText(progress?.chapterNumber, w.workId in state.readMarks),
+                    badge = badgeText(progress?.chapterNumber, w.workId in state.readMarks, w.workId in state.downloadedIds),
                     onClick = { onOpenWork(w.workId, progress?.chapterId, progress?.chapterNumber ?: 1) },
                     links = state.links[w.workId],
                     onOpenWorkList = onOpenWorkList,

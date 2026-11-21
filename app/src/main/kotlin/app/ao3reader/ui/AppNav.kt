@@ -48,6 +48,7 @@ import app.ao3reader.ui.account.AccountScreen
 import app.ao3reader.ui.account.AccountViewModel
 import app.ao3reader.ui.common.AppIcons
 import app.ao3reader.ui.library.LibraryScreen
+import app.ao3reader.ui.library.DownloadsViewModel
 import app.ao3reader.ui.library.LibraryViewModel
 import app.ao3reader.ui.reader.ReaderScreen
 import app.ao3reader.ui.reader.ReaderViewModel
@@ -190,8 +191,10 @@ fun AppNav(container: AppContainer) {
             }
             composable(Routes.LIBRARY) {
                 val vm: LibraryViewModel = viewModel(factory = LibraryViewModel.factory(container))
+                val downloadsVm: DownloadsViewModel = viewModel(factory = DownloadsViewModel.factory(container))
                 LibraryScreen(
                     vm,
+                    downloadsVm,
                     bottomBarHeight = BottomBarHeight,
                     onAccount = ::openAccount,
                     onOpenWork = ::openWork,
