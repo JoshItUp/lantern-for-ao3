@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -241,14 +242,21 @@ class ReaderViewModel(
     /** A longer list arrived (a downloaded work's online chapters): adopt it, keeping the chapter being read. */
     private fun applyListUpdate(list: List<ChapterRef>) {
         if (list.isEmpty() || list == _state.value.chapters) return
-        _state.update { s ->
+        var before: ReaderUiState? = null
+        val after = _state.updateAndGet { s ->
+            before = s
             // Nothing listed yet (open() is still deciding), or only the single-entry fallback: open() owns that.
-            if (s.chapters.isEmpty() || !s.chapterListLoaded) return@update s
+            if (s.chapters.isEmpty() || !s.chapterListLoaded) return@updateAndGet s
             val current = s.chapters.getOrNull(s.index)
             val index = current?.let { c -> list.indexOfFirst { it.matches(c.chapterId, c.number) } }?.takeIf { it >= 0 }
                 ?: s.index.coerceAtMost(list.lastIndex)
             s.copy(chapters = list, index = index)
         }
+        val old = before ?: return
+        if (after === old || after.content == null || after.loading) return   // a load in flight prefetches itself
+        // The list grew past the chapter being read: prefetch the new next one, as a load would have.
+        val next = after.chapters.getOrNull(after.index + 1) ?: return
+        if (old.chapters.none { it.matches(next.chapterId, next.number) }) source.prefetch(workId, next)
     }
 
     /** Route (or restored handle) chapter, then saved progress, then the route number, then the first chapter. */
@@ -348,7 +356,16 @@ class ReaderViewModel(
         val req = requestDownload ?: return
         val title = s.content?.workTitle?.takeIf { it.isNotBlank() } ?: d?.title ?: ""
         val authors = s.content?.authors ?: d?.authors?.split(", ")?.filter { it.isNotEmpty() } ?: emptyList()
-        val block: suspend () -> Unit = { req(workId, title, authors) }
+        // A request that throws (e.g. the database write) would otherwise fail silently on the app scope.
+        val block: suspend () -> Unit = {
+            try {
+                req(workId, title, authors)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _messages.trySend(ActionMessage(DOWNLOAD_FAILED_TO_START))
+            }
+        }
         val r = runner
         if (r != null) r.launch(ActionRunner.workKey(workId, "DOWNLOAD"), block) else viewModelScope.launch { block() }
     }
@@ -704,6 +721,7 @@ class ReaderViewModel(
     }
 
     companion object {
+        const val DOWNLOAD_FAILED_TO_START = "Couldn't start the download."
         const val SAVE_DEBOUNCE_MS = 500L
         const val SPINNER_DELAY_MS = 350L
         /** How long a downloaded work whose resume point isn't stored waits for the online chapter list. */

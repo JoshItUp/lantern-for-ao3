@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.ao3reader.data.db.DownloadEntity
 import app.ao3reader.data.db.DownloadJob
 import app.ao3reader.data.db.ProgressEntity
 import app.ao3reader.ui.search.WorkCard
@@ -138,29 +139,10 @@ private fun ColumnScope.DownloadExtras(
     onConfirmDelete: () -> Unit,
     onCancelDelete: () -> Unit,
 ) {
-    val e = row.entity
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    val details = remember(e.sizeBytes, e.downloadedAt) {
-        listOfNotNull(formatSize(e.sizeBytes), e.downloadedAt?.let(::downloadDate)).joinToString(" · ")
-    }
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(chaptersLine(e), style = MaterialTheme.typography.labelMedium, color = muted)
-                newChapters(e)?.let { n ->
-                    Text(" · ", style = MaterialTheme.typography.labelMedium, color = muted)
-                    Text(
-                        "$n new",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier
-                            .background(MaterialTheme.colorScheme.primaryContainer, ChipShape)
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
-                }
-            }
-            Text(details, style = MaterialTheme.typography.labelMedium, color = muted)
+            StoredDetails(row.entity)
             Failure(row)
         }
         Actions(row, menu, onMenu, onUpdate, onAskDelete)
@@ -168,7 +150,32 @@ private fun ColumnScope.DownloadExtras(
     if (confirming) ConfirmDelete(onConfirmDelete, onCancelDelete)
 }
 
-/** A row with no copy yet (or a copy whose blurb can't be read): title, authors and state. Tappable only with a copy ([onOpen]). */
+/** Chapters stored (with the "N new" chip when known), then size · date. Nothing for a row without a copy. */
+@Composable
+private fun StoredDetails(e: DownloadEntity) {
+    val d = remember(e.hasCopy, e.chaptersStored, e.chaptersPostedRemote, e.sizeBytes, e.downloadedAt) { copyDetails(e) } ?: return
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(d.chapters, style = MaterialTheme.typography.labelMedium, color = muted)
+        d.newChapters?.let { n ->
+            Text(" · ", style = MaterialTheme.typography.labelMedium, color = muted)
+            Text(
+                "$n new",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.primaryContainer, ChipShape)
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
+        }
+    }
+    Text(d.sizeAndDate, style = MaterialTheme.typography.labelMedium, color = muted)
+}
+
+/**
+ * A row with no copy yet (or a copy whose blurb can't be read): title, authors and state, plus the stored
+ * chapters, size and date when there is a copy. Tappable only with a copy ([onOpen]).
+ */
 @Composable
 private fun PendingRow(
     row: DownloadRow,
@@ -203,6 +210,7 @@ private fun PendingRow(
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
+                StoredDetails(e)
                 Failure(row)
             }
             Actions(row, menu, onMenu, onUpdate, onAskDelete)
