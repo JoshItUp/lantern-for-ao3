@@ -41,8 +41,15 @@ object ChapterParser {
             ?: skin.selectFirst("h2.title")?.text()
             ?: doc.title().substringBefore(" - ")).trim()
         val byline = workPreface?.selectFirst("h3.byline") ?: skin.selectFirst("h3.byline")
-        val authors = byline?.select("a[rel=author]")?.map { it.text().trim() }?.filter { it.isNotEmpty() }.orEmpty()
+        val authorAnchors: List<Element> = byline?.select("a[rel=author]").orEmpty()
+        val authors = authorAnchors.map { it.text().trim() }.filter { it.isNotEmpty() }
             .ifEmpty { listOfNotNull(byline?.text()?.trim()?.takeIf { it.isNotEmpty() }) }
+        // Work meta (outside #workskin): "Part N of <series>", one span.position per series.
+        val series = doc.select("dl.work.meta dd.series span.position").mapNotNull { pos: Element ->
+            val part = pos.ownText().substringAfter("Part", "").trim().substringBefore(' ').toIntOrNull()
+            val a: Element = pos.selectFirst("a[href]") ?: return@mapNotNull null
+            Links.series(a, part)
+        }
 
         val chapterPreface: Element? = skin.selectFirst("#chapters div.chapter.preface")
         val selected = doc.selectFirst("#selected_id option[selected]")
@@ -84,6 +91,9 @@ object ChapterParser {
         // chapter end notes (inside #chapters) precede work end notes (#work_endnotes) in document order
         val endNotes = notes(skin, "div.end.notes.module blockquote.userstuff")
 
-        return ChapterContent(workId, ref, workTitle, authors, beginNotes, body, endNotes, summary)
+        return ChapterContent(
+            workId, ref, workTitle, authors, beginNotes, body, endNotes, summary,
+            authorLinks = authorAnchors.mapNotNull { Links.author(it) }, series = series,
+        )
     }
 }

@@ -32,7 +32,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
 import androidx.compose.foundation.layout.systemBarsIgnoringVisibility
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -43,6 +45,9 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
@@ -79,6 +84,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.ao3reader.ao3.model.Block
 import app.ao3reader.ao3.model.ChapterContent
 import app.ao3reader.ao3.net.FetchResult
+import app.ao3reader.ui.common.CardLinks
+import app.ao3reader.ui.common.OpenWorkList
+import app.ao3reader.ui.common.headerLinks
+import app.ao3reader.ui.search.LinkLine
 import app.ao3reader.ui.common.BlockItem
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -97,17 +106,25 @@ private const val FADE_IN_MS = 180
 private const val FLING_VELOCITY_DP = 800f
 /** Resistance applied to drags that can't change chapter (first/last). */
 private const val EDGE_RESISTANCE = 0.2f
+/** The bottom controls bar's height above the navigation-bar inset. */
+private val BOTTOM_BAR_HEIGHT = 64.dp
 
 /**
  * [onBack] pops the reader. Back is handled here with a plain (non-predictive) callback, so there is
  * no gesture-following preview: the bars come back first, then the pop plays on release.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
+fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit, onOpenWorkList: OpenWorkList, onAccount: () -> Unit) {
     val s by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     var showFontSheet by rememberSaveable { mutableStateOf(false) }
+    val snackbar = remember { SnackbarHostState() }
+    val account by rememberUpdatedState(onAccount)
+    // One stable slot for every chapter footer: the row inside collects the actions itself, so an
+    // action never recomposes the chapter LazyColumn.
+    val footerActions: @Composable () -> Unit = remember(vm) { { ReaderActionRow(vm, onSignIn = { account() }) } }
 
     val bars = ImmersiveMode(hidden = !s.controlsVisible)
     FlushOnStop(vm)
@@ -183,6 +200,8 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                             onScroll = vm::onScroll,
                             onNext = vm::next,
                             onRetry = vm::retry,
+                            onOpenWorkList = onOpenWorkList,
+                            footerActions = footerActions,
                         )
                     }
                 }
@@ -200,8 +219,28 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit) {
                     onFont = { showFontSheet = true },
                 )
             }
+
+            AnimatedVisibility(
+                visible = s.controlsVisible,
+                enter = fadeIn() + slideInVertically { it },
+                exit = fadeOut() + slideOutVertically { it },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            ) {
+                ReaderBottomBar { footerActions() }
+            }
+
+            // Above the bottom bar while it shows; the inset ignores visibility so nothing jumps.
+            SnackbarHost(
+                snackbar,
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility)
+                    .padding(bottom = if (s.controlsVisible) BOTTOM_BAR_HEIGHT else 0.dp),
+            )
         }
     }
+
+    ReaderActionSheets(vm, snackbar, onAccount = { account() })
 
     if (showFontSheet) {
         FontSheet(
@@ -299,6 +338,8 @@ private fun ChapterPane(
     onScroll: (Int, Int) -> Unit,
     onNext: () -> Unit,
     onRetry: () -> Unit,
+    onOpenWorkList: OpenWorkList,
+    footerActions: @Composable () -> Unit,
 ) {
     val content = page.content
     // Text that was ready when the pane appeared shows at once; text that arrives later fades in instead of popping.
@@ -308,7 +349,7 @@ private fun ChapterPane(
     }
     when {
         content != null -> Box(Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha.value }) {
-            ChapterText(content, isCurrent, isLast, restore, style, onRestored, onScroll, onNext)
+            ChapterText(content, isCurrent, isLast, restore, style, onRestored, onScroll, onNext, onOpenWorkList, footerActions)
         }
         page.error != null -> ErrorMessage(page.error, onRetry)
         // Empty background until the load has taken SPINNER_DELAY_MS, so cached swipes never flash a spinner.
@@ -328,6 +369,8 @@ private fun ChapterText(
     onRestored: () -> Unit,
     onScroll: (Int, Int) -> Unit,
     onNext: () -> Unit,
+    onOpenWorkList: OpenWorkList,
+    footerActions: @Composable () -> Unit,
 ) {
     val listState = rememberLazyListState()
     val report by rememberUpdatedState(if (isCurrent) onScroll else null)
@@ -349,6 +392,8 @@ private fun ChapterText(
     val text = MaterialTheme.colorScheme.onBackground
     val dim = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
     val noteStyle = remember(style) { style.forNotes() }
+    // Built once per chapter from the parsed links (a few objects; no parsing).
+    val links = remember(content) { content.headerLinks() }
     // Stable padding: the bars come and go with the controls, the text must not jump.
     val bars = WindowInsets.systemBarsIgnoringVisibility.asPaddingValues()
     val padding = PaddingValues(
@@ -358,7 +403,7 @@ private fun ChapterText(
 
     LazyColumn(state = listState, contentPadding = padding, modifier = Modifier.fillMaxSize()) {
         if (content.ref.number == 1 || content.summary.isNotEmpty()) {
-            workHeader(content, style, noteStyle, text, dim)
+            workHeader(content, links, style, noteStyle, text, dim, onOpenWorkList)
         }
         if (content.ref.title.isNotBlank()) {
             item(key = "chapter-title") {
@@ -373,16 +418,18 @@ private fun ChapterText(
         blocks("body", content.body, style, text)
         if (content.endNotes.isNotEmpty()) item(key = "end-rule") { NoteRule() }
         blocks("end", content.endNotes, noteStyle, dim)
-        item(key = "footer") { ChapterFooter(isLast, onNext) }
+        item(key = "footer") { ChapterFooter(isLast, onNext, footerActions) }
     }
 }
 
 private fun LazyListScope.workHeader(
     content: ChapterContent,
+    links: CardLinks,
     style: TextStyle,
     noteStyle: TextStyle,
     text: Color,
     dim: Color,
+    onOpenWorkList: OpenWorkList,
 ) {
     item(key = "work-title") {
         Column(Modifier.padding(bottom = 12.dp)) {
@@ -390,9 +437,9 @@ private fun LazyListScope.workHeader(
                 content.workTitle, color = text, fontWeight = FontWeight.Bold,
                 style = style.copy(fontSize = style.fontSize * 1.35f),
             )
-            if (content.authors.isNotEmpty()) {
-                Text("by " + content.authors.joinToString(", "), style = noteStyle, color = dim)
-            }
+            // Authors and series open their work lists; the rest of the header is not a tap target.
+            if (links.authors.isNotEmpty()) LinkLine("by", links.authors, noteStyle, dim, onOpenWorkList)
+            for (s in links.series) LinkLine(null, listOf(s), noteStyle, dim, onOpenWorkList)
         }
     }
     blocks("summary", content.summary, noteStyle, dim)
@@ -410,17 +457,34 @@ private fun NoteRule() {
     HorizontalDivider(Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 }
 
+/** The same action row as the controls, then the way on. */
 @Composable
-private fun ChapterFooter(isLast: Boolean, onNext: () -> Unit) {
+private fun ChapterFooter(isLast: Boolean, onNext: () -> Unit, actions: @Composable () -> Unit) {
     Column(
         Modifier.fillMaxWidth().padding(top = 32.dp, bottom = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        actions()
+        Spacer(Modifier.height(16.dp))
         if (isLast) {
             Text("End of work", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             OutlinedButton(onClick = onNext) { Text("Next chapter →") }
         }
+    }
+}
+
+/** The controls' bottom bar: the action row on the same translucent surface as the top bar. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ReaderBottomBar(content: @Composable () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), modifier = Modifier.fillMaxWidth()) {
+        Box(
+            Modifier
+                .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility)
+                .height(BOTTOM_BAR_HEIGHT),
+            contentAlignment = Alignment.Center,
+        ) { content() }
     }
 }
 

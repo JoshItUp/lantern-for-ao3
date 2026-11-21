@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.androidx.room)
 }
 
 android {
@@ -42,6 +43,9 @@ android {
         compose = true
     }
 
+    // MigrationTestHelper (Robolectric) reads the exported schema JSON from the merged assets; debug only, so release APKs do not carry them.
+    sourceSets.getByName("debug").assets.directories.add("$projectDir/schemas")
+
     testOptions {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
@@ -51,13 +55,10 @@ android {
     }
 }
 
-ksp {
+room {
     // Room writes each schema version here; the JSON is committed so future migrations can be checked against it.
-    arg("room.schemaLocation", "$projectDir/schemas")
+    schemaDirectory("$projectDir/schemas")
 }
-// Every variant's KSP run reads and rewrites the same schema file: run them one at a time, or one
-// can read the file while another is writing it (an empty-JSON failure on a clean parallel build).
-tasks.matching { it.name == "kspReleaseKotlin" }.configureEach { mustRunAfter("kspDebugKotlin") }
 
 kotlin {
     compilerOptions {
@@ -87,7 +88,9 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.jsoup)
 
+    testImplementation(libs.androidx.room.testing)
     testImplementation(libs.robolectric)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.okhttp.mockwebserver)
 }

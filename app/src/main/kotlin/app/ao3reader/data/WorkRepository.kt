@@ -15,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
@@ -28,6 +29,19 @@ interface ChapterSource {
 /** An Ok response that has no chapter text (e.g. AO3's sign-in page for a registered-users-only work). */
 class NotAChapterPageException : IllegalStateException("not a chapter page")
 
+/** Signed-in GETs (the owner's [app.ao3reader.account.Session]); an interface so tests use a fake. */
+interface AuthedFetch {
+    /** True while an account acts: chapter loads then go signed in and count as AO3 History visits. */
+    fun isActing(): Boolean
+    /** [forceNetwork]: never served from the HTTP cache (a History visit must reach AO3). */
+    suspend fun get(url: HttpUrl, interactive: Boolean, forceNetwork: Boolean = false): FetchResult
+}
+
+/** Receives every signed-in chapter page, so the reader actions have fresh forms ([ActionRepository.update]). */
+fun interface ActionSink {
+    fun update(workId: Long, html: String, pageUrl: HttpUrl)
+}
+
 class WorkRepository(
     private val fetcher: Fetcher,
     private val cache: ChapterCache,
@@ -35,6 +49,9 @@ class WorkRepository(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val parseDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Null: never signed in (every load is a plain fetch). */
+    private val authed: AuthedFetch? = null,
+    private val actions: ActionSink? = null,
 ) : ChapterSource {
     private class Memo(val list: List<ChapterRef>, val fetchedAt: Long)
 
@@ -43,6 +60,8 @@ class WorkRepository(
     }
     /** Prefetches running now, by "workId/key"; [chapter] waits for one rather than fetching the same page twice. */
     private val inFlight = ConcurrentHashMap<String, Job>()
+    /** When each chapter ("workId/key") was last visited signed in; debounces [visit]. */
+    private val lastVisit = ConcurrentHashMap<String, Long>()
 
     /**
      * Memoized for [CHAPTER_LIST_TTL_MS], so a work in progress picks up new chapters. An expired list
@@ -51,11 +70,15 @@ class WorkRepository(
     override suspend fun chapters(workId: Long): Loaded<List<ChapterRef>> {
         val memo = synchronized(chapterLists) { chapterLists[workId] }
         if (memo != null && clock() - memo.fetchedAt < CHAPTER_LIST_TTL_MS) return Loaded.Ok(memo.list)
-        return when (val r = fetcher.get(Ao3Urls.navigate(workId))) {
+        val url = Ao3Urls.navigate(workId)
+        val signedIn = authed?.takeIf { it.isActing() }
+        return when (val r = signedIn?.get(url, interactive = true) ?: fetcher.get(url)) {
             is FetchResult.Ok -> {
                 val list = withContext(parseDispatcher) { NavigateParser.parse(r.html) }
                 if (list.isEmpty() && memo != null) return Loaded.Ok(memo.list)
-                synchronized(chapterLists) { chapterLists[workId] = Memo(list, clock()) }
+                // An empty list (e.g. the sign-in page of a restricted work) is not memoized: after
+                // signing in, the next open fetches the real one.
+                if (list.isNotEmpty()) synchronized(chapterLists) { chapterLists[workId] = Memo(list, clock()) }
                 Loaded.Ok(list)
             }
             else -> if (memo != null) Loaded.Ok(memo.list) else Loaded.Error(r)
@@ -66,18 +89,67 @@ class WorkRepository(
         val key = keyOf(ref)
         // A prefetch of this chapter is under way (a swipe soon after opening): let it land in the cache.
         inFlight[flightKey(workId, key)]?.join()
+        val signedIn = authed?.takeIf { it.isActing() }
         val cached = withContext(ioDispatcher) { cache.get(workId, key) }
         if (cached != null) {
             val parsed = parseValid(cached, workId)
-            if (parsed != null) return Loaded.Ok(parsed)
+            if (parsed != null) {
+                // Shown from the cache at once; the History visit goes out in the background.
+                if (signedIn != null) visit(signedIn, workId, ref)
+                return Loaded.Ok(parsed)
+            }
             withContext(ioDispatcher) { cache.remove(workId, key) }
         }
-        val r = fetcher.get(Ao3Urls.chapter(workId, ref.chapterId))
+        val url = Ao3Urls.chapter(workId, ref.chapterId)
+        // Signed in, this fetch is the visit (and loads registered-users-only works).
+        if (signedIn != null) lastVisit[flightKey(workId, key)] = clock()
+        // forceNetwork: an HTTP-cached copy would show the chapter but record no visit.
+        val r = signedIn?.get(url, interactive = true, forceNetwork = true) ?: fetcher.get(url)
         if (r !is FetchResult.Ok) return Loaded.Error(r)
         val parsed = parseValid(r.html, workId)
             ?: return Loaded.Error(FetchResult.Failed(NotAChapterPageException()))
         withContext(ioDispatcher) { try { cache.put(workId, key, r.html) } catch (_: IOException) {} }
+        if (signedIn != null) feedActions(workId, r)
         return Loaded.Ok(parsed)
+    }
+
+    /**
+     * A background signed-in GET of a chapter shown from the cache, so it appears in the owner's AO3
+     * History. Its page feeds [actions] and refreshes the cache entry; the reader is not re-rendered.
+     * At most one per chapter within [VISIT_DEBOUNCE_MS].
+     */
+    private fun visit(signedIn: AuthedFetch, workId: Long, ref: ChapterRef) {
+        val key = keyOf(ref)
+        val fk = flightKey(workId, key)
+        val now = clock()
+        if (lastVisit.size > MAX_VISITS_TRACKED) lastVisit.entries.removeIf { now - it.value >= VISIT_DEBOUNCE_MS }
+        while (true) {
+            val last = lastVisit[fk]
+            if (last != null && now - last < VISIT_DEBOUNCE_MS) return
+            val won = if (last == null) lastVisit.putIfAbsent(fk, now) == null else lastVisit.replace(fk, last, now)
+            if (won) break
+        }
+        scope.launch {
+            try {
+                val r = signedIn.get(Ao3Urls.chapter(workId, ref.chapterId), interactive = false, forceNetwork = true)
+                if (r !is FetchResult.Ok) return@launch
+                if (!withContext(parseDispatcher) { ChapterParser.looksLikeChapterPage(r.html) }) return@launch
+                feedActions(workId, r)
+                if (parseValid(r.html, workId) != null) {
+                    withContext(ioDispatcher) { try { cache.put(workId, key, r.html) } catch (_: IOException) {} }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    private suspend fun feedActions(workId: Long, r: FetchResult.Ok) {
+        val sink = actions ?: return
+        withContext(parseDispatcher) {
+            try { sink.update(workId, r.html, r.finalUrl) } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+        }
     }
 
     /** Parses [html] once; null if it is not a chapter page, has an empty body, or the parser throws. */
@@ -99,8 +171,9 @@ class WorkRepository(
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 if (withContext(ioDispatcher) { cache.get(workId, key) } != null) return@launch
-                // Background work: a challenge is left for the next reader load to solve.
-                val r = fetcher.get(Ao3Urls.chapter(workId, ref.chapterId), interactive = false)
+                // Background work: a challenge is left for the next reader load to solve. Signed out, so
+                // a prefetch adds no AO3 History entry or hit the owner didn't intend.
+                val r = fetcher.get(Ao3Urls.chapter(workId, ref.chapterId), interactive = false, anonymous = true)
                 if (r is FetchResult.Ok && withContext(parseDispatcher) { ChapterParser.looksLikeChapterPage(r.html) }) {
                     withContext(ioDispatcher) { cache.put(workId, key, r.html) }
                 }
@@ -121,6 +194,9 @@ class WorkRepository(
 
     companion object {
         private const val MAX_MEMOIZED = 20
+        private const val MAX_VISITS_TRACKED = 256
         const val CHAPTER_LIST_TTL_MS = 10 * 60 * 1000L
+        /** A chapter opened again within this long after a signed-in visit is not visited again. */
+        const val VISIT_DEBOUNCE_MS = 60_000L
     }
 }

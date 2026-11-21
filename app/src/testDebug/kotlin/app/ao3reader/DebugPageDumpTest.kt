@@ -18,9 +18,10 @@ class DebugPageDumpTest {
     private class Stub(val result: FetchResult) : Fetcher {
         var lastAccept: String? = "unset"
         var lastInteractive: Boolean? = null
-        override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean): FetchResult {
+        override suspend fun get(url: HttpUrl, accept: String?, interactive: Boolean, anonymous: Boolean, forceNetwork: Boolean): FetchResult {
             lastAccept = accept; lastInteractive = interactive; return result
         }
+        override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?, interactive: Boolean) = result
     }
 
     @Test fun passesAcceptThrough() = runBlocking {

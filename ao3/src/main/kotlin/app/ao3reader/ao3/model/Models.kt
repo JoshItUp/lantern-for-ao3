@@ -48,6 +48,7 @@ data class SearchQuery(
     val sort: SortColumn = SortColumn.UPDATED, val sortDescending: Boolean = true,
 )
 
+@Serializable
 data class WorkBlurb(
     val workId: Long, val title: String, val authors: List<String>, val fandoms: List<String>,
     val rating: String?, val warnings: List<String>, val categories: List<String>, val complete: Boolean?,
@@ -55,7 +56,18 @@ data class WorkBlurb(
     val summaryHtml: String?, val language: String?, val words: Int?,
     val chaptersPosted: Int?, val chaptersTotal: Int?,   // total null when "?"
     val kudos: Int?, val hits: Int?, val bookmarks: Int?, val comments: Int?, val updated: String?,
+    /** The tappable authors (orphaned/anonymous ones have none), in byline order. Defaults keep older cached JSON readable. */
+    val authorLinks: List<AuthorLink> = emptyList(),
+    val series: List<SeriesLink> = emptyList(),
 )
+
+/** An author byline link `/users/{user}/pseuds/{pseud}`; [name] is the link text (e.g. "Pseud (user)"). */
+@Serializable
+data class AuthorLink(val name: String, val user: String, val pseud: String)
+
+/** A series a work belongs to; [part] is its position ("Part N of"), null when not shown. */
+@Serializable
+data class SeriesLink(val id: Long, val title: String, val part: Int? = null)
 
 data class WorkPage(val works: List<WorkBlurb>, val page: Int, val hasNext: Boolean)
 
@@ -82,4 +94,7 @@ data class ChapterContent(
     val workId: Long, val ref: ChapterRef, val workTitle: String,
     val authors: List<String>, val beginNotes: List<Block>, val body: List<Block>, val endNotes: List<Block>,
     val summary: List<Block>,   // summary only populated for chapter 1
+    val authorLinks: List<AuthorLink> = emptyList(),
+    /** From the work meta (any chapter page). */
+    val series: List<SeriesLink> = emptyList(),
 )

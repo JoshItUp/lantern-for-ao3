@@ -34,6 +34,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -62,9 +64,11 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -72,6 +76,9 @@ import app.ao3reader.ao3.model.SearchQuery
 import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.data.db.PresetEntity
 import app.ao3reader.data.db.ProgressEntity
+import app.ao3reader.ui.common.OpenWorkList
+import app.ao3reader.ui.common.AppIcons
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
@@ -103,7 +110,17 @@ private sealed interface NameDialog {
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
+fun SearchScreen(
+    vm: SearchViewModel,
+    needsSignIn: Boolean,
+    /** The bottom bar overlays this screen; the list pads by it (constant, so nothing relayouts). */
+    bottomBarHeight: Dp,
+    /** Emits when the Search tab is tapped again: back to the top. */
+    reselect: Flow<Unit>,
+    onAccount: () -> Unit,
+    onOpenWorkList: OpenWorkList,
+    onOpenWork: OpenWork,
+) {
     val state by vm.state.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val focus = LocalFocusManager.current
@@ -157,6 +174,14 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
             .collect { focus.clearFocus() }
     }
 
+    LaunchedEffect(listState) {
+        reselect.collect {
+            barState.heightOffset = 0f
+            // Far down, jump instead: animating through many cards would compose every one of them.
+            if (listState.firstVisibleItemIndex > 10) listState.scrollToItem(0) else listState.animateScrollToItem(0)
+        }
+    }
+
     fun search() {
         focus.clearFocus()
         commitText()
@@ -173,7 +198,13 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
             // it the list's top padding, stays constant: scrolling never recomposes the list.
             Box(
                 Modifier
-                    .onSizeChanged { barState.heightOffsetLimit = -it.height.toFloat() }
+                    .onSizeChanged {
+                        // The sign-in banner can change the height: a fully hidden bar stays fully hidden,
+                        // and a shrinking bar's offset is re-coerced into the new limit (the setter clamps).
+                        val hidden = barState.heightOffsetLimit < 0f && barState.heightOffset <= barState.heightOffsetLimit
+                        barState.heightOffsetLimit = -it.height.toFloat()
+                        barState.heightOffset = if (hidden) barState.heightOffsetLimit else barState.heightOffset
+                    }
                     .graphicsLayer { translationY = barState.heightOffset }
                     // Swallow taps on the bar's blank area and status strip so they never reach the
                     // card underneath; the field and button handle their own taps first.
@@ -183,13 +214,17 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
                     .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
                     .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 10.dp),
             ) {
-                SearchBar(
-                    text = text,
-                    filterCount = activeFilterCount(state.query),
-                    onText = { text = it },
-                    onSearch = ::search,
-                    onFilters = { focus.clearFocus(); commitText(); showFilters = true },
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SearchBar(
+                        text = text,
+                        filterCount = activeFilterCount(state.query),
+                        onText = { text = it },
+                        onSearch = ::search,
+                        onFilters = { focus.clearFocus(); commitText(); showFilters = true },
+                        onAccount = { focus.clearFocus(); commitText(); onAccount() },
+                    )
+                    if (needsSignIn) SignInBanner(onAccount)
+                }
             }
         },
     ) { inner ->
@@ -200,7 +235,7 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
                 start = 12.dp, end = 12.dp,
                 // The bar's own bottom padding gives the 10 dp gap above the first item.
                 top = inner.calculateTopPadding(),
-                bottom = inner.calculateBottomPadding() + 24.dp,
+                bottom = inner.calculateBottomPadding() + bottomBarHeight + 24.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -238,6 +273,8 @@ fun SearchScreen(vm: SearchViewModel, onOpenWork: OpenWork) {
                     summary = state.summaries[w.workId].orEmpty(),
                     badge = badgeText(progress?.chapterNumber, w.workId in state.readMarks),
                     onClick = { onOpenWork(w.workId, progress?.chapterId, progress?.chapterNumber ?: 1) },
+                    links = state.links[w.workId],
+                    onOpenWorkList = onOpenWorkList,
                 )
             }
             if (state.works.isNotEmpty() && (state.loading || state.error != null)) {
@@ -409,8 +446,9 @@ private fun SearchBar(
     onText: (String) -> Unit,
     onSearch: () -> Unit,
     onFilters: () -> Unit,
+    onAccount: () -> Unit,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         OutlinedTextField(
             value = text,
             onValueChange = onText,
@@ -419,11 +457,30 @@ private fun SearchBar(
             shape = RoundedCornerShape(14.dp),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = { onSearch() }),
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).padding(end = 4.dp),
         )
         FilledTonalButton(onClick = onFilters, shape = RoundedCornerShape(14.dp)) {
             Text(if (filterCount > 0) "Filters · $filterCount" else "Filters")
         }
+        IconButton(onClick = onAccount) { Icon(AppIcons.Account, contentDescription = "Account") }
+    }
+}
+
+/** Shown when a silent re-login was rejected: the stored password no longer works. */
+@Composable
+private fun SignInBanner(onAccount: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(10.dp))
+            .clickable(role = Role.Button, onClickLabel = "Sign in", onClick = onAccount)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Text(
+            "AO3 signed you out. Sign in again",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+        )
     }
 }
 

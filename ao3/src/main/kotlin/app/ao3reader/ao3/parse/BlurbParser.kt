@@ -3,26 +3,30 @@ package app.ao3reader.ao3.parse
 import app.ao3reader.ao3.model.WorkBlurb
 import app.ao3reader.ao3.model.WorkPage
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 
 /** Parses any AO3 work listing (search, history, bookmarks, tag pages). Never throws on missing elements. */
 object BlurbParser {
-    fun parsePage(html: String, page: Int): WorkPage {
-        val doc = Jsoup.parse(html)
+    fun parsePage(html: String, page: Int): WorkPage = parsePage(Jsoup.parse(html), page)
+
+    fun parsePage(doc: Document, page: Int): WorkPage {
         val works = doc.select("li.blurb").mapNotNull { runCatching { parseBlurb(it) }.getOrNull() }
         val hasNext = doc.select("ol.pagination li.next a[href]").isNotEmpty()
         return WorkPage(works, page, hasNext)
     }
 
-    private fun parseBlurb(li: Element): WorkBlurb? {
+    /** One `li.blurb` -> WorkBlurb; null when it is not a work (series/mystery/deleted). */
+    fun parseBlurb(li: Element): WorkBlurb? {
         val workId: Long = li.id().removePrefix("work_").toLongOrNull()
             ?: li.selectFirst("h4.heading a[href^=/works/]")?.attr("href")
                 ?.removePrefix("/works/")?.takeWhile { it.isDigit() }?.toLongOrNull()
             ?: return null
         val heading = li.selectFirst("h4.heading")
         val title = heading?.selectFirst("a[href^=/works/]")?.text()?.trim().orEmpty()
-        val authorLinks = heading?.select("a[rel=author]").orEmpty().map { it.text().trim() }
-        val authors = authorLinks.ifEmpty {
+        val authorAnchors: List<Element> = heading?.select("a[rel=author]").orEmpty()
+        val authorNames = authorAnchors.map { it.text().trim() }
+        val authors = authorNames.ifEmpty {
             val t = heading?.ownText()?.trim().orEmpty()
             if (t.startsWith("by ")) listOf(t.removePrefix("by ").trim()).filter { it.isNotEmpty() }
             else if (t.isNotEmpty() && heading?.selectFirst("a[href^=/works/]") != null) listOf(t.removePrefix("by").trim()).filter { it.isNotEmpty() }
@@ -41,7 +45,9 @@ object BlurbParser {
         val complete = req("iswip")?.let { it.equals("Complete Work", true) }
 
         fun tags(cls: String) = li.select("ul.tags li.$cls a.tag").map { it.text().trim() }
-        val summary: String? = li.selectFirst("blockquote.summary")?.html()?.trim()?.ifEmpty { null }
+        val summary: String? = li.select("blockquote.summary")
+            .firstOrNull { q -> q.parents().none { it.tagName() == "div" && it.hasClass("user") && it.hasClass("module") } }
+            ?.html()?.trim()?.ifEmpty { null }
 
         fun stat(cls: String): Element? = li.selectFirst("dl.stats dd.$cls")
         fun num(cls: String): Int? = stat(cls)?.text()?.replace(",", "")?.trim()?.toIntOrNull()
@@ -57,6 +63,11 @@ object BlurbParser {
             words = num("words"), chaptersPosted = posted, chaptersTotal = total,
             kudos = num("kudos"), hits = num("hits"), bookmarks = num("bookmarks"), comments = num("comments"),
             updated = li.selectFirst("p.datetime")?.text()?.trim()?.ifEmpty { null },
+            authorLinks = authorAnchors.mapNotNull { Links.author(it) },
+            series = li.select("ul.series li").mapNotNull { s: Element ->
+                val a: Element = s.selectFirst("a[href]") ?: return@mapNotNull null
+                Links.series(a, s.selectFirst("strong")?.text()?.trim()?.toIntOrNull())
+            },
         )
     }
 }

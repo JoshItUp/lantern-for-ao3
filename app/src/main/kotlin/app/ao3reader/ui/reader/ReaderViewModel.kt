@@ -12,7 +12,22 @@ import app.ao3reader.AppContainer
 import app.ao3reader.ao3.model.ChapterContent
 import app.ao3reader.ao3.model.ChapterRef
 import app.ao3reader.ao3.net.FetchResult
+import app.ao3reader.ao3.parse.BookmarkInput
+import app.ao3reader.ao3.parse.WorkActions
+import app.ao3reader.data.ActionMayHaveTakenEffectException
+import app.ao3reader.data.ActionRunner
+import app.ao3reader.data.ActionUnconfirmedException
 import app.ao3reader.data.ChapterSource
+import app.ao3reader.data.WorkActionSource
+import app.ao3reader.ui.common.ActionMessage
+import app.ao3reader.ui.common.COMMENT_MAY_NOT_HAVE_POSTED
+import app.ao3reader.ui.common.WorkAction
+import app.ao3reader.ui.common.actionFeedback
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import app.ao3reader.data.Loaded
 import app.ao3reader.data.ReaderFont
 import app.ao3reader.data.SettingsStore
@@ -57,12 +72,53 @@ data class ReaderUiState(
     val showSpinner: Boolean = false,
 )
 
+/** The account actions for the work being read: what the action row shows. */
+@Immutable
+data class ActionsUi(
+    /** False: the row is replaced by a sign-in button. */
+    val signedIn: Boolean = false,
+    /** AO3's state for this work has arrived (from a signed-in page); until then everything reads "not done". */
+    val known: Boolean = false,
+    val kudosGiven: Boolean = false,
+    val bookmarked: Boolean = false,
+    val markedForLater: Boolean = false,
+    val subscribed: Boolean = false,
+    /** Actions AO3 offers on this work (all of them until its state is known). */
+    val available: Set<WorkAction> = WorkAction.entries.toSet(),
+    /** Actions with a request in flight: their buttons show progress. */
+    val running: Set<WorkAction> = emptySet(),
+)
+
+/** The bottom sheet open over the reader, if any. */
+sealed interface ActionSheet {
+    /**
+     * [loading]: AO3's bookmark is being read first. [note]: a warning shown above Save. [error]: the last
+     * save failed (shown in the sheet: a snackbar would sit under its scrim).
+     */
+    data class Bookmark(
+        val loading: Boolean, val initial: BookmarkInput, val existing: Boolean,
+        val note: String? = null, val error: String? = null,
+    ) : ActionSheet
+    /**
+     * The comment goes to this chapter (the one shown when the sheet opened). [error]: the last post
+     * failed. [mustCheck]: it may have gone through, so Post stays off until the text is edited or the
+     * owner says they checked. [failedOnce]: the button reads "Post again".
+     */
+    data class Comment(
+        val chapterId: Long?, val chapterNumber: Int,
+        val error: String? = null, val mustCheck: Boolean = false, val failedOnce: Boolean = false,
+    ) : ActionSheet
+}
+
 /**
  * One chapter in memory at a time: changing chapter replaces [ReaderUiState.content]; the next
  * chapter is only prefetched to the disk cache.
  *
  * The current chapter is written to [savedState] under the route's argument keys, so after process
  * death the restored entry reopens the chapter being read rather than the one it was opened at.
+ *
+ * Account actions run through [runner] (an app-wide scope): leaving the reader never cancels a POST.
+ * [actions] is derived narrowly from the repository's state for this work only.
  */
 @OptIn(FlowPreview::class)
 class ReaderViewModel(
@@ -74,6 +130,8 @@ class ReaderViewModel(
     private val settings: SettingsStore,
     private val savedState: SavedStateHandle = SavedStateHandle(),
     private val clock: () -> Long = System::currentTimeMillis,
+    private val actionSource: WorkActionSource? = null,
+    private val runner: ActionRunner? = null,
 ) : ViewModel() {
     /**
      * The chapter to open: the handle's values when it has them (on a fresh open these are the
@@ -291,6 +349,279 @@ class ReaderViewModel(
         }
     }
 
+    // ---- account actions ----
+
+    private val _messages = Channel<ActionMessage>(Channel.BUFFERED)
+    /** One-off feedback for a snackbar. */
+    val messages: Flow<ActionMessage> = _messages.receiveAsFlow()
+
+    // An open comment sheet and its draft survive process death (savedState); the bookmark sheet re-reads AO3.
+    private val _sheet = MutableStateFlow<ActionSheet?>(
+        savedState.get<Int>(KEY_COMMENT_NUMBER)?.let { n ->
+            commentSheet(
+                savedState.get<String>(KEY_COMMENT_CHAPTER)?.toLongOrNull(), n,
+                mustCheck = savedState.get<Boolean>(KEY_COMMENT_MUST_CHECK) ?: false,
+                failedOnce = savedState.get<Boolean>(KEY_COMMENT_FAILED_ONCE) ?: false,
+            )
+        }
+    )
+    val sheet: StateFlow<ActionSheet?> = _sheet.asStateFlow()
+
+    private val _commentDraft = MutableStateFlow(savedState.get<String>(KEY_COMMENT_DRAFT) ?: "")
+    /** Kept when the sheet is closed or a post fails; cleared only once a comment is posted. */
+    val commentDraft: StateFlow<String> = _commentDraft.asStateFlow()
+
+    /** Only this work's entry, the sign-in state and this work's running actions: other works never emit. */
+    val actions: StateFlow<ActionsUi> = run {
+        val src = actionSource
+        val r = runner
+        if (src == null || r == null) return@run MutableStateFlow(ActionsUi()).asStateFlow()
+        combine(
+            src.actingAccount.map { it != null }.distinctUntilChanged(),
+            src.state.map { it[workId] }.distinctUntilChanged(),
+            r.running.map { runningFor(it) }.distinctUntilChanged(),
+            ::actionsUi,
+        ).stateIn(
+            viewModelScope, SharingStarted.Eagerly,
+            actionsUi(src.actingAccount.value != null, src.state.value[workId], runningFor(r.running.value)),
+        )
+    }
+
+    private fun runningFor(keys: Set<String>): Set<WorkAction> =
+        WorkAction.entries.filterTo(HashSet()) { ActionRunner.workKey(workId, it.name) in keys }
+
+    private fun actionsUi(signedIn: Boolean, a: WorkActions?, running: Set<WorkAction>) = ActionsUi(
+        signedIn = signedIn,
+        known = a != null,
+        kudosGiven = a?.kudosGiven == true,
+        bookmarked = a?.bookmarked == true,
+        markedForLater = a?.markedForLater == true,
+        subscribed = a?.subscribed == true,
+        available = if (a == null) WorkAction.entries.toSet() else buildSet {
+            if (a.kudos != null || a.kudosGiven) add(WorkAction.KUDOS)
+            if (a.bookmarkForm != null || a.bookmarkEditUrl != null) add(WorkAction.BOOKMARK)
+            if (a.markForLater != null) add(WorkAction.LATER)
+            if (a.subscribe != null) add(WorkAction.SUBSCRIBE)
+            if (a.comment != null) add(WorkAction.COMMENT)
+        },
+        running = running,
+    )
+
+    /**
+     * Runs [block] in the app scope (one per action at a time; a tap while it runs is ignored, so a
+     * repository `Ok(pending)` is never shown as confirmed) and reports the result here if the reader
+     * is still open. [onError] returns true when it showed the failure itself (inside an open sheet,
+     * where a snackbar would be hidden under the sheet's scrim); otherwise a snackbar says it.
+     */
+    private fun <T> runAction(
+        action: WorkAction,
+        block: suspend (WorkActionSource) -> Loaded<T>,
+        onError: (ActionMessage, Loaded.Error) -> Boolean = { _, _ -> false },
+        onOk: (T) -> Unit = {},
+    ) {
+        val src = actionSource ?: return
+        val r = runner ?: return
+        if (src.actingAccount.value == null) return
+        val job = r.launch(ActionRunner.workKey(workId, action.name)) { block(src) } ?: return
+        viewModelScope.launch {
+            val res = try {
+                job.await()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Loaded.Error(FetchResult.Failed(e))
+            }
+            val msg = actionFeedback(action, res)
+            when (res) {
+                is Loaded.Ok -> { onOk(res.value); _messages.trySend(msg) }
+                is Loaded.Error -> if (!onError(msg, res)) _messages.trySend(msg)
+            }
+        }
+    }
+
+    /**
+     * Not a toggle: nothing happens once kudos are given. While the state is unknown AO3 is read first,
+     * so kudos it already shows read "Kudos already given" (Ok(false)), not "Kudos sent" (Ok(true)).
+     */
+    fun kudos() {
+        if (actions.value.kudosGiven) return
+        runAction(WorkAction.KUDOS, { src ->
+            val known = src.state.value[workId] ?: when (val fresh = src.refresh(workId)) {
+                is Loaded.Error -> return@runAction fresh
+                is Loaded.Ok -> fresh.value
+            }
+            if (known.kudosGiven) return@runAction Loaded.Ok(false)
+            when (val r = src.kudos(workId)) {
+                is Loaded.Ok -> Loaded.Ok(true)
+                is Loaded.Error -> r
+            }
+        })
+    }
+
+    fun toggleLater() = toggle(WorkAction.LATER, { it.markedForLater }) { it.toggleMarkForLater(workId) }
+
+    fun toggleSubscribe() = toggle(WorkAction.SUBSCRIBE, { it.subscribed }) { it.toggleSubscribe(workId) }
+
+    /**
+     * The owner means the opposite of what the button showed when tapped. While AO3's state is unknown
+     * (shown as "not done") it is read first. If the state (read, or updated since the tap) already is
+     * what the owner meant, nothing is sent: a tap on Subscribe can never unsubscribe.
+     */
+    private fun toggle(action: WorkAction, get: (WorkActions) -> Boolean, call: suspend (WorkActionSource) -> Loaded<Boolean>) {
+        val intended = !(actionSource?.state?.value?.get(workId)?.let(get) ?: false)
+        runAction(action, { src ->
+            val now = src.state.value[workId] ?: when (val fresh = src.refresh(workId)) {
+                is Loaded.Error -> return@runAction fresh
+                is Loaded.Ok -> fresh.value
+            }
+            if (get(now) == intended) return@runAction Loaded.Ok(intended)
+            call(src)
+        })
+    }
+
+    /** Opens the bookmark sheet, pre-filled from the existing bookmark (read from AO3 first when needed). */
+    fun openBookmark() {
+        val src = actionSource ?: return
+        if (src.actingAccount.value == null || _sheet.value != null) return
+        val existing = src.existingBookmark(workId)
+        val known = src.state.value[workId]
+        when {
+            existing != null -> _sheet.value = ActionSheet.Bookmark(false, existing, existing = true)
+            known != null && !known.bookmarked -> _sheet.value = ActionSheet.Bookmark(false, EMPTY_BOOKMARK, existing = false)
+            else -> {
+                _sheet.value = ActionSheet.Bookmark(true, EMPTY_BOOKMARK, existing = known?.bookmarked == true)
+                viewModelScope.launch {
+                    val r = src.refresh(workId)
+                    val ex = src.existingBookmark(workId)
+                    val now = src.state.value[workId]
+                    val bookmarked = now?.bookmarked == true
+                    val note = when {
+                        now == null && r is Loaded.Error -> "Couldn't check AO3 for an existing bookmark. Saving replaces its notes and tags."
+                        bookmarked && ex == null -> "Couldn't load this bookmark's notes and tags. Saving replaces them."
+                        else -> null
+                    }
+                    _sheet.update {
+                        if (it is ActionSheet.Bookmark && it.loading) ActionSheet.Bookmark(false, ex ?: EMPTY_BOOKMARK, bookmarked, note) else it
+                    }
+                }
+            }
+        }
+    }
+
+    /** Creates or edits the bookmark; the sheet closes only once AO3 confirms it. */
+    fun saveBookmark(input: BookmarkInput) {
+        _sheet.update { s -> if (s is ActionSheet.Bookmark) s.copy(error = null) else s }
+        runAction(
+            WorkAction.BOOKMARK, { it.saveBookmark(workId, input) },
+            onError = { msg, _ -> showInSheet { s -> (s as? ActionSheet.Bookmark)?.copy(error = msg.text) } },
+        ) {
+            _sheet.update { s -> if (s is ActionSheet.Bookmark) null else s }
+        }
+    }
+
+    /** Puts a failure into the open sheet; false (a snackbar then says it) when that sheet is gone. */
+    private fun showInSheet(change: (ActionSheet) -> ActionSheet?): Boolean {
+        var shown = false
+        _sheet.update { s -> s?.let(change)?.also { shown = true } ?: s }
+        return shown
+    }
+
+    /** Opens the comment sheet for the chapter shown now. */
+    fun openComment() {
+        val src = actionSource ?: return
+        if (src.actingAccount.value == null || _sheet.value != null) return
+        val s = _state.value
+        val ref = s.chapters.getOrNull(s.index) ?: s.content?.ref ?: return
+        setSheet(commentSheet(ref.chapterId, ref.number, commentMustCheck, commentFailedOnce))
+    }
+
+    /** A reopened or restored sheet under the guard says why Post is off (the original error is gone). */
+    private fun commentSheet(chapterId: Long?, number: Int, mustCheck: Boolean, failedOnce: Boolean) =
+        ActionSheet.Comment(
+            chapterId, number,
+            error = if (mustCheck) COMMENT_MAY_NOT_HAVE_POSTED else null,
+            mustCheck = mustCheck, failedOnce = failedOnce,
+        )
+
+    /**
+     * The guard after an uncertain post, kept with the draft (savedState): closing and reopening the
+     * sheet, or process death, still shows Post off until the text is edited or [postAgain].
+     */
+    private var commentMustCheck: Boolean
+        get() = savedState.get<Boolean>(KEY_COMMENT_MUST_CHECK) ?: false
+        set(v) { savedState[KEY_COMMENT_MUST_CHECK] = v }
+    /** A post of this draft failed: the button reads "Post again". */
+    private var commentFailedOnce: Boolean
+        get() = savedState.get<Boolean>(KEY_COMMENT_FAILED_ONCE) ?: false
+        set(v) { savedState[KEY_COMMENT_FAILED_ONCE] = v }
+
+    /** Editing the text after an uncertain post is the owner's own change: Post is enabled again. */
+    fun setCommentDraft(text: String) {
+        if (text != _commentDraft.value) {
+            commentMustCheck = false
+            _sheet.update { s -> if (s is ActionSheet.Comment && s.mustCheck) s.copy(mustCheck = false) else s }
+        }
+        _commentDraft.value = text
+        savedState[KEY_COMMENT_DRAFT] = text
+    }
+
+    /**
+     * Posts the draft once (never retried). On failure the text stays and the error shows in the sheet;
+     * after a post that may have gone through, Post stays off until the text is edited or [postAgain].
+     */
+    fun postComment() {
+        val target = _sheet.value as? ActionSheet.Comment ?: return
+        if (target.mustCheck || commentMustCheck) return
+        val text = _commentDraft.value
+        if (text.isBlank()) return
+        _sheet.update { s -> if (s is ActionSheet.Comment) s.copy(error = null) else s }
+        runAction(
+            WorkAction.COMMENT, { it.comment(workId, target.chapterId, text) },
+            onError = { msg, err ->
+                val cause = (err.result as? FetchResult.Failed)?.cause
+                val uncertain = cause is ActionUnconfirmedException || cause is ActionMayHaveTakenEffectException
+                // Kept even if the sheet was closed meanwhile: reopening it still shows the guard.
+                if (_commentDraft.value == text) {
+                    commentFailedOnce = true
+                    if (uncertain) commentMustCheck = true
+                }
+                showInSheet { s ->
+                    (s as? ActionSheet.Comment)?.takeIf { it.chapterId == target.chapterId }
+                        ?.copy(error = msg.text, mustCheck = uncertain, failedOnce = true)
+                }
+            },
+        ) {
+            _commentDraft.update { if (it == text) "" else it }
+            if (_commentDraft.value.isEmpty()) {
+                savedState.remove<String>(KEY_COMMENT_DRAFT)
+                commentMustCheck = false
+                commentFailedOnce = false
+            }
+            if ((_sheet.value as? ActionSheet.Comment)?.chapterId == target.chapterId) setSheet(null)
+        }
+    }
+
+    /** The owner checked the work after an uncertain post and still wants to post. */
+    fun postAgain() {
+        if (_commentDraft.value.isBlank()) return
+        commentMustCheck = false
+        _sheet.update { s -> if (s is ActionSheet.Comment) s.copy(mustCheck = false) else s }
+        postComment()
+    }
+
+    fun closeSheet() = setSheet(null)
+
+    private fun setSheet(s: ActionSheet?) {
+        _sheet.value = s
+        if (s is ActionSheet.Comment) {
+            savedState[KEY_COMMENT_NUMBER] = s.chapterNumber
+            savedState[KEY_COMMENT_CHAPTER] = s.chapterId?.toString()
+        } else {
+            savedState.remove<Int>(KEY_COMMENT_NUMBER)
+            savedState.remove<String>(KEY_COMMENT_CHAPTER)
+        }
+    }
+
     fun setFontSize(sp: Int) {
         val clamped = sp.coerceIn(MIN_FONT_SP, MAX_FONT_SP)
         _state.update { it.copy(fontSizeSp = clamped) }
@@ -309,6 +640,12 @@ class ReaderViewModel(
         const val SPINNER_DELAY_MS = 350L
         const val MIN_FONT_SP = 14
         const val MAX_FONT_SP = 28
+        val EMPTY_BOOKMARK = BookmarkInput("", emptyList(), isPrivate = false, isRec = false)
+        private const val KEY_COMMENT_DRAFT = "action.commentDraft"
+        private const val KEY_COMMENT_NUMBER = "action.commentNumber"
+        private const val KEY_COMMENT_CHAPTER = "action.commentChapterId"
+        private const val KEY_COMMENT_MUST_CHECK = "action.commentMustCheck"
+        private const val KEY_COMMENT_FAILED_ONCE = "action.commentFailedOnce"
 
         fun factory(container: AppContainer, workId: Long, chapterId: Long?, number: Int): ViewModelProvider.Factory =
             viewModelFactory {
@@ -316,6 +653,7 @@ class ReaderViewModel(
                     ReaderViewModel(
                         workId, chapterId, number, container.workRepo, container.db.progressDao(), container.settings,
                         savedState = createSavedStateHandle(),
+                        actionSource = container.actionRepo, runner = container.actionRunner,
                     )
                 }
             }
