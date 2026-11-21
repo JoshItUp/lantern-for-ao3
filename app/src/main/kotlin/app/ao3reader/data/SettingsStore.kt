@@ -3,6 +3,7 @@ package app.ao3reader.data
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -31,11 +32,19 @@ class SettingsStore(private val store: DataStore<Preferences>) {
         store.edit { it[FONT] = f.name }
     }
 
+    /** The notification permission has been asked for once (Android 13+); it is never asked again. */
+    val notificationPermissionAsked: Flow<Boolean> = store.data.map { it[NOTIFICATIONS_ASKED] ?: false }
+
+    suspend fun markNotificationPermissionAsked() {
+        store.edit { it[NOTIFICATIONS_ASKED] = true }
+    }
+
     private companion object {
         const val MIN_SP = 14
         const val MAX_SP = 28
         const val DEFAULT_SP = 18
         val FONT_SIZE = intPreferencesKey("font_size_sp")
         val FONT = stringPreferencesKey("font_family")
+        val NOTIFICATIONS_ASKED = booleanPreferencesKey("notification_permission_asked")
     }
 }

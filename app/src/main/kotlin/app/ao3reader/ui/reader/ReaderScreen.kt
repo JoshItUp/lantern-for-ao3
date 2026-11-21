@@ -106,30 +106,36 @@ private const val FADE_IN_MS = 180
 private const val FLING_VELOCITY_DP = 800f
 /** Resistance applied to drags that can't change chapter (first/last). */
 private const val EDGE_RESISTANCE = 0.2f
-/** The bottom controls bar's height above the navigation-bar inset. */
-private val ACTION_ROW_HEIGHT = 64.dp
-private val DOWNLOAD_SLOT_HEIGHT = 44.dp
-private val BOTTOM_BAR_HEIGHT = ACTION_ROW_HEIGHT + DOWNLOAD_SLOT_HEIGHT
+/** The bottom controls bar's height above the navigation-bar inset: the action row alone. */
+private val BOTTOM_BAR_HEIGHT = 64.dp
 
 /**
- * [onBack] pops the reader. Back is handled here with a plain (non-predictive) callback, so there is
+ * [onBack] pops the reader. [askNotifications] runs with every Download/Update/Retry tap (it asks for
+ * the notification permission the first time); the download is requested whatever it does. Back is handled here with a plain (non-predictive) callback, so there is
  * no gesture-following preview: the bars come back first, then the pop plays on release.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit, onOpenWorkList: OpenWorkList, onAccount: () -> Unit) {
+fun ReaderScreen(
+    vm: ReaderViewModel,
+    onBack: () -> Unit,
+    onOpenWorkList: OpenWorkList,
+    onAccount: () -> Unit,
+    askNotifications: () -> Unit = {},
+) {
     val s by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     var showFontSheet by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val account by rememberUpdatedState(onAccount)
+    val ask by rememberUpdatedState(askNotifications)
+    val onDownload: () -> Unit = remember(vm) { { vm.onDownload(); ask() } }
     // One stable slot for every chapter footer: the row inside collects the actions itself, so an
     // action never recomposes the chapter LazyColumn.
     val footerActions: @Composable () -> Unit = remember(vm) { { ReaderActionRow(vm, onSignIn = { account() }) } }
-    // The download slot: the footer shows the new-chapters line only at the last stored chapter; the bar always does.
-    val footerDownload: @Composable (Boolean) -> Unit = remember(vm) { { showNew -> DownloadSlot(vm, showNew, inBar = false) } }
-    val barDownload: @Composable () -> Unit = remember(vm) { { DownloadSlot(vm, showNewChapters = true, inBar = true) } }
+    // The footer's download slot shows the new-chapters line only at the last stored chapter; the ⋯ menu always does.
+    val footerDownload: @Composable (Boolean) -> Unit = remember(vm) { { showNew -> DownloadSlot(vm, showNew, onDownload) } }
     val lastStored = s.download?.takeIf { it.hasCopy }?.chaptersStored?.minus(1) ?: -1
 
     val bars = ImmersiveMode(hidden = !s.controlsVisible)
@@ -225,6 +231,8 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit, onOpenWorkList: OpenWo
                     label = chapterLabel(s.chapters, s.index, s.chapterListLoaded),
                     onMenu = { scope.launch { drawer.open() } },
                     onFont = { showFontSheet = true },
+                    download = s.download,
+                    onDownload = onDownload,
                 )
             }
 
@@ -234,7 +242,7 @@ fun ReaderScreen(vm: ReaderViewModel, onBack: () -> Unit, onOpenWorkList: OpenWo
                 exit = fadeOut() + slideOutVertically { it },
                 modifier = Modifier.align(Alignment.BottomCenter),
             ) {
-                ReaderBottomBar(download = barDownload, actions = footerActions)
+                ReaderBottomBar(actions = footerActions)
             }
 
             // Above the bottom bar while it shows; the inset ignores visibility so nothing jumps.
@@ -496,12 +504,12 @@ private fun ChapterFooter(
 /** The controls' bottom bar: the action row on the same translucent surface as the top bar. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ReaderBottomBar(download: @Composable () -> Unit, actions: @Composable () -> Unit) {
+private fun ReaderBottomBar(actions: @Composable () -> Unit) {
     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility)) {
-            Box(Modifier.height(DOWNLOAD_SLOT_HEIGHT), contentAlignment = Alignment.Center) { download() }
-            Box(Modifier.height(ACTION_ROW_HEIGHT), contentAlignment = Alignment.Center) { actions() }
-        }
+        Box(
+            Modifier.windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility).height(BOTTOM_BAR_HEIGHT),
+            contentAlignment = Alignment.Center,
+        ) { actions() }
     }
 }
 

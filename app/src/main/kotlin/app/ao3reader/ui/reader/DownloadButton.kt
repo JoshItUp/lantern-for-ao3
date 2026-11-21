@@ -1,8 +1,6 @@
 package app.ao3reader.ui.reader
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -48,53 +46,49 @@ private fun DownloadEntity.newChapters(): Int {
 }
 
 /**
- * The Download button in its own slot (visible signed out too), with a line under or beside it:
- * the failure reason when the job FAILED, else, when [showNewChapters], the tappable new-chapters line.
- * [inBar]: one compact row for the controls bar; otherwise a centred column for the chapter footer.
+ * What the Download control shows for this work's row. [enabled] is false while queued or downloading
+ * (a tap would be ignored) and once the copy is current ([done]). [failure]: the reason a FAILED job
+ * gave. [newLine]: "N new chapters · Update", only when [showNewChapters] and nothing else is shown.
+ */
+data class DownloadUi(val label: String, val enabled: Boolean, val done: Boolean, val failure: String?, val newLine: String?)
+
+fun downloadUi(d: DownloadEntity?, showNewChapters: Boolean): DownloadUi {
+    val label = downloadLabel(d)
+    val busy = d?.job == DownloadJob.QUEUED || d?.job == DownloadJob.DOWNLOADING
+    val failure = if (d?.job == DownloadJob.FAILED) d.failure?.takeIf { it.isNotBlank() } else null
+    val newLine = if (showNewChapters && failure == null && !busy) newChaptersLine(d) else null
+    val done = label == DOWNLOADED_LABEL
+    return DownloadUi(label, enabled = !busy && !done, done = done, failure = failure, newLine = newLine)
+}
+
+/**
+ * The chapter footer's Download button (visible signed out too), with the failure reason under it when
+ * the job FAILED, else, when [showNewChapters], the tappable new-chapters line. [onDownload] runs on a tap.
  * Collects [ReaderViewModel.download] itself, so a download change never recomposes the chapter text.
  */
 @Composable
-fun DownloadSlot(vm: ReaderViewModel, showNewChapters: Boolean, inBar: Boolean, modifier: Modifier = Modifier) {
+fun DownloadSlot(vm: ReaderViewModel, showNewChapters: Boolean, onDownload: () -> Unit, modifier: Modifier = Modifier) {
     val d by vm.download.collectAsStateWithLifecycle()
-    val label = downloadLabel(d)
-    val busy = d?.job == DownloadJob.QUEUED || d?.job == DownloadJob.DOWNLOADING
-    val failure = if (d?.job == DownloadJob.FAILED) d?.failure?.takeIf { it.isNotBlank() } else null
-    val newLine = if (showNewChapters && failure == null && !busy) newChaptersLine(d) else null
-    // Busy and done states are inert: a tap would be ignored (request is a no-op while queued; a current copy needs nothing).
-    val done = label == DOWNLOADED_LABEL
-
-    val button: @Composable () -> Unit = {
+    val ui = downloadUi(d, showNewChapters)
+    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         TextButton(
-            onClick = vm::onDownload,
-            enabled = !busy && !done,
+            onClick = onDownload,
+            enabled = ui.enabled,
             colors = ButtonDefaults.textButtonColors(
-                disabledContentColor = if (done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                disabledContentColor = if (ui.done) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             ),
         ) {
             Icon(AppIcons.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-            Text(label, modifier = Modifier.padding(start = 6.dp))
+            Text(ui.label, modifier = Modifier.padding(start = 6.dp))
         }
-    }
-    val line: @Composable (Modifier) -> Unit = { m ->
         when {
-            failure != null -> Text(
-                failure, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
-                maxLines = if (inBar) 1 else 3, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = m,
+            ui.failure != null -> Text(
+                ui.failure, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error,
+                maxLines = 3, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
             )
-            newLine != null -> TextButton(onClick = vm::onDownload, modifier = m) {
-                Text(newLine, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            ui.newLine != null -> TextButton(onClick = onDownload) {
+                Text(ui.newLine, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-        }
-    }
-    if (inBar) {
-        Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            button()
-            line(Modifier.weight(1f, fill = false))
-        }
-    } else {
-        Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            button()
-            line(Modifier)
         }
     }
 }

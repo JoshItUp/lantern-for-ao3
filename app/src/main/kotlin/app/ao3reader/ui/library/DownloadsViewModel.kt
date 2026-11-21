@@ -74,10 +74,11 @@ data class DownloadsUiState(
 private const val KB = 1024L
 private const val MB = 1024L * 1024L
 
-/** < 1 MB: "N KB" (rounded); otherwise "X.Y MB". */
-fun formatSize(bytes: Long): String =
-    if (bytes < MB) "${Math.round(bytes.toDouble() / KB)} KB"
-    else String.format(Locale.US, "%.1f MB", bytes.toDouble() / MB)
+/** Under 1024 KB once rounded: "N KB"; otherwise "X.Y MB" (so 1,048,575 bytes is "1.0 MB", never "1024 KB"). */
+fun formatSize(bytes: Long): String {
+    val kb = Math.round(bytes.toDouble() / KB)
+    return if (kb < KB) "$kb KB" else String.format(Locale.US, "%.1f MB", bytes.toDouble() / MB)
+}
 
 fun chaptersLine(e: DownloadEntity): String =
     if (e.chaptersStored == 1) "1 chapter" else "${e.chaptersStored} chapters"
@@ -90,7 +91,18 @@ fun newChapters(e: DownloadEntity): Int? =
 fun totalLine(works: Int, bytes: Long): String =
     "${if (works == 1) "1 work" else "$works works"} · ${formatSize(bytes)}"
 
-private val DateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.UK)
+/** What a row with a copy knows about it without its blurb. */
+data class CopyDetails(val chapters: String, val newChapters: Int?, val sizeAndDate: String)
+
+/** Chapters stored (and new ones, when known), size and date, from the row alone; null without a copy. */
+fun copyDetails(e: DownloadEntity, zone: ZoneId = ZoneId.systemDefault()): CopyDetails? {
+    if (!e.hasCopy) return null
+    val sizeAndDate = listOfNotNull(formatSize(e.sizeBytes), e.downloadedAt?.let { downloadDate(it, zone) }).joinToString(" · ")
+    return CopyDetails(chaptersLine(e), newChapters(e), sizeAndDate)
+}
+
+// Locale.US: the UK locale's short September is "Sept"; every month here is three letters.
+private val DateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.US)
 
 /** "21 Nov 2026", in the device's zone. */
 fun downloadDate(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
