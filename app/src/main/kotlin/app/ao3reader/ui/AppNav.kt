@@ -1,5 +1,6 @@
 package app.ao3reader.ui
 
+import app.ao3reader.ui.common.rememberNotificationPermissionAsk
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -192,9 +193,11 @@ fun AppNav(container: AppContainer) {
             composable(Routes.LIBRARY) {
                 val vm: LibraryViewModel = viewModel(factory = LibraryViewModel.factory(container))
                 val downloadsVm: DownloadsViewModel = viewModel(factory = DownloadsViewModel.factory(container))
+                val askNotifications = rememberNotificationPermissionAsk(container.settings)
                 LibraryScreen(
                     vm,
                     downloadsVm,
+                    askNotifications = askNotifications,
                     bottomBarHeight = BottomBarHeight,
                     onAccount = ::openAccount,
                     onOpenWork = ::openWork,
@@ -239,11 +242,13 @@ fun AppNav(container: AppContainer) {
                 val vm: ReaderViewModel = viewModel(factory = ReaderViewModel.factory(container, workId, chapterId, number))
                 // Only pop while this entry is on top: a second back during the exit animation must
                 // not pop the search screen as well.
+                val askNotifications = rememberNotificationPermissionAsk(container.settings)
                 ReaderScreen(
                     vm,
                     onBack = { if (nav.currentBackStackEntry?.id == e.id) nav.popBackStack() },
                     onOpenWorkList = ::openWorkList,
                     onAccount = ::openAccount,
+                    askNotifications = askNotifications,
                 )
             }
         }

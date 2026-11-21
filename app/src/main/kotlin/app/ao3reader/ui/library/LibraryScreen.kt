@@ -99,6 +99,8 @@ fun LibraryScreen(
     onAccount: () -> Unit,
     onOpenWork: OpenWork,
     onOpenWorkList: OpenWorkList,
+    /** Runs with each Update/Retry tap: asks for the notification permission the first time (never blocks it). */
+    askNotifications: () -> Unit = {},
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val downloads by downloadsVm.state.collectAsStateWithLifecycle()
@@ -146,7 +148,7 @@ fun LibraryScreen(
                     readMarks = state.readMarks,
                     bottomBarHeight = bottomBarHeight,
                     onOpenWork = openWork,
-                    onUpdate = downloadsVm::update,
+                    onUpdate = { id -> downloadsVm.update(id); askNotifications() },
                     onAskDelete = downloadsVm::askDelete,
                     onConfirmDelete = downloadsVm::confirmDelete,
                     onCancelDelete = downloadsVm::cancelDelete,
