@@ -2,3 +2,4 @@
 * text=auto
 
 app/schemas/** text eol=lf
+ao3/src/test/resources/fixtures/** text eol=lf
