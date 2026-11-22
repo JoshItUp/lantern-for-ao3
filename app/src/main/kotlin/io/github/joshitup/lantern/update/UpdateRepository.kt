@@ -58,19 +58,24 @@ class UpdateRepository(
 
     private var seeded = false
 
+    /** Set once a check has published; a slower [seed] must not overwrite that with the older saved value. */
+    @Volatile private var published = false
+
     /** Restores the saved newer release once (a restart inside the throttle window must keep the strip); drops it if the install caught up. */
     private suspend fun seed() {
         if (seeded) return
         seeded = true
         val saved = settings.updateAvailable.first()?.let { decode(it) } ?: return
+        if (published) return
         if (saved.version.code > installedCode) {
-            if (_available.value == null) _available.value = saved
+            _available.value = saved
         } else {
             settings.setUpdateAvailable(null)
         }
     }
 
     private suspend fun publish(release: ReleaseInfo?) {
+        published = true
         _available.value = release
         settings.setUpdateAvailable(release?.let { json.encodeToString(ReleaseInfo.serializer(), it) })
     }

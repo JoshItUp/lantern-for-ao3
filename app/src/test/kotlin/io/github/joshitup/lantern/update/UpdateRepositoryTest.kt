@@ -8,6 +8,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import org.junit.After
@@ -53,7 +54,8 @@ class UpdateRepositoryTest {
 
     private fun repo(src: ReleaseSource, installed: Int = 10000) = UpdateRepository(src, settings, installed, { now }, scope)
 
-    private suspend fun awaitStrip(expected: Boolean, r: UpdateRepository) = withTimeout(5000) { r.showStrip.first { it == expected } }
+    private suspend fun awaitStrip(expected: Boolean, r: UpdateRepository) =
+        withContext(Dispatchers.Default) { withTimeout(5000) { r.showStrip.first { it == expected } } }
 
     @Test fun maybeCheck_skipsWithin24h() = runTest {
         val src = FakeSource(rel(10001)); val r = repo(src)
