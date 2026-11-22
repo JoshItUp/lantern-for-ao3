@@ -15,7 +15,9 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Reads GitHub releases. Uses its own OkHttp client (no AO3 cookies or interceptors) and sends no identifiers.
- * Every unusable response (non-2xx, non-JSON, draft, prerelease, bad tag, no APK) is null; only network failures throw [java.io.IOException].
+ * A valid answer with no usable release (404 — GitHub's reply to `releases/latest` before the first release — draft, prerelease,
+ * bad tag, no APK) is null. Network failures throw [java.io.IOException]; any other non-2xx or a body that isn't release JSON
+ * throws [UpdateCheckException], so a transient GitHub error never reads as "up to date".
  */
 class UpdateClient(
     private val http: OkHttpClient,
@@ -34,12 +36,13 @@ class UpdateClient(
     private suspend fun fetch(path: String): ReleaseInfo? = withContext(Dispatchers.IO) {
         val url = baseUrl.newBuilder().addPathSegments("repos/$repo/$path").build()
         http.newCall(request(url, "application/vnd.github+json")).execute().use { resp ->
-            if (!resp.isSuccessful) return@use null
+            if (resp.code == 404) return@use null
+            if (!resp.isSuccessful) throw UpdateCheckException("GitHub answered HTTP ${resp.code}")
             val body = resp.body.string()
             val dto = try {
                 json.decodeFromString<ReleaseDto>(body)
             } catch (e: IllegalArgumentException) {
-                return@use null // not JSON, or not a release
+                throw UpdateCheckException("GitHub's answer isn't release JSON") // not JSON, or not a release
             }
             toInfo(dto)
         }

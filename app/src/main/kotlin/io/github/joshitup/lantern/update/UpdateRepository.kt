@@ -33,7 +33,7 @@ class UpdateRepository(
     suspend fun maybeCheck() {
         seed()
         val last = settings.updateLastCheck.first()
-        if (last != null && clock() - last < CHECK_INTERVAL_MS) return
+        if (last != null && clock() - last in 0 until CHECK_INTERVAL_MS) return // a future timestamp (clock moved back) doesn't block checks
         try {
             checkNow()
         } finally {

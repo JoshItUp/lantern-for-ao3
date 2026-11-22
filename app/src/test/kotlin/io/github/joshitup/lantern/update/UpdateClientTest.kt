@@ -1,5 +1,6 @@
 package io.github.joshitup.lantern.update
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -8,6 +9,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 
@@ -55,13 +57,26 @@ class UpdateClientTest {
     @Test fun badTag_null() = runTest {
         enqueue(release(tag = "v1.0")); assertNull(client.latest())
         enqueue(release(tag = "v1.0.0-beta")); assertNull(client.latest())
+        enqueue(release(tag = "1.0.0")); assertNull(client.latest())
     }
 
-    @Test fun rateLimited403_null() = runTest { enqueue("""{"message":"rate limit"}""", 403); assertNull(client.latest()) }
+    @Test fun rateLimited403_throws() = runTest {
+        enqueue("""{"message":"rate limit"}""", 403)
+        assertThrows(UpdateCheckException::class.java) { runBlocking { client.latest() } }
+    }
 
+    @Test fun serverError500_throws() = runTest {
+        enqueue("oops", 500)
+        assertThrows(UpdateCheckException::class.java) { runBlocking { client.latest() } }
+    }
+
+    /** GitHub answers `releases/latest` with 404 while a repository has no releases yet. */
     @Test fun notFound404_null() = runTest { enqueue("{}", 404); assertNull(client.latest()) }
 
-    @Test fun htmlBody_null() = runTest { enqueue("<html><body>oops</body></html>"); assertNull(client.latest()) }
+    @Test fun htmlBody_throws() = runTest {
+        enqueue("<html><body>oops</body></html>")
+        assertThrows(UpdateCheckException::class.java) { runBlocking { client.latest() } }
+    }
 
     @Test fun sendsHeaders() = runTest {
         enqueue(release())

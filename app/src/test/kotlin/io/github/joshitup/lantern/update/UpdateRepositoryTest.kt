@@ -78,6 +78,23 @@ class UpdateRepositoryTest {
         assertNull(r.available.value)
     }
 
+    @Test fun futureLastCheck_stillChecks() = runTest {
+        settings.setUpdateLastCheck(now + 3600_000L) // clock moved backwards since the last check
+        val src = FakeSource(rel(10001)); val r = repo(src)
+        r.maybeCheck()
+        assertEquals(1, src.latestCalls)
+    }
+
+    @Test fun transientFailure_keepsSavedRelease() = runTest {
+        val src = FakeSource(rel(10001)); val r = repo(src)
+        r.checkNow(); assertNotNull(r.available.value)
+        src.fail = true
+        assertEquals(CheckResult.Failed("Couldn't check for updates"), r.checkNow())
+        assertEquals(10001, r.available.value?.version?.code)
+        assertNotNull(settings.updateAvailable.first())
+        awaitStrip(true, r)
+    }
+
     @Test fun olderOrEqualRelease_notAvailable() = runTest {
         val src = FakeSource(rel(10000)); val r = repo(src, installed = 10000)
         assertEquals(CheckResult.UpToDate, r.checkNow())

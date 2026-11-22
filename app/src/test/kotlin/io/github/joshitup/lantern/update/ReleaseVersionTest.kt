@@ -20,8 +20,8 @@ class ReleaseVersionTest {
     }
 
     @Test
-    fun parsesTagWithoutPrefix() {
-        assertEquals(ReleaseVersion(1, 0, 0), ReleaseVersion.parseTag("1.0.0"))
+    fun rejectsTagWithoutPrefix() {
+        assertNull(ReleaseVersion.parseTag("1.0.0"))
     }
 
     @Test
