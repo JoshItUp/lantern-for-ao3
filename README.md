@@ -55,10 +55,10 @@ Connect the phone with USB debugging on (`adb devices` should list it). There is
 The debug build adds a developer hook that fetches any AO3 path and saves the page for fixture work:
 
 ```sh
-adb shell am broadcast -a app.ao3reader.DEBUG_FETCH -n app.ao3reader/.DebugFetchReceiver --es path '/works/1'
+adb shell am broadcast -a io.github.joshitup.lantern.DEBUG_FETCH -n io.github.joshitup.lantern/.DebugFetchReceiver --es path '/works/1'
 ```
 
-Add `--ez anon true` to fetch signed out. Pages land in the app's `files/debug-pages` (read them with `adb shell run-as app.ao3reader`).
+Add `--ez anon true` to fetch signed out. Pages land in the app's `files/debug-pages` (read them with `adb shell run-as io.github.joshitup.lantern`).
 
 ## Tests
 

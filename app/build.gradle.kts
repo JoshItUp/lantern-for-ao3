@@ -9,7 +9,7 @@ plugins {
 }
 
 android {
-    namespace = "app.ao3reader"
+    namespace = "io.github.joshitup.lantern"
     compileSdk {
         version = release(37) {
             minorApiLevel = 2
@@ -17,11 +17,14 @@ android {
     }
 
     defaultConfig {
-        applicationId = "app.ao3reader"
+        applicationId = "io.github.joshitup.lantern"
         minSdk = 36
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+
+        // The GitHub repo the in-app update check reads releases from.
+        buildConfigField("String", "UPDATE_REPO", "\"JoshItUp/lantern-for-ao3\"")
     }
 
     buildTypes {
@@ -41,6 +44,8 @@ android {
 
     buildFeatures {
         compose = true
+        // AGP 9 turns BuildConfig off by default; the update check needs it.
+        buildConfig = true
     }
 
     // MigrationTestHelper (Robolectric) reads the exported schema JSON from the merged assets; debug only, so release APKs do not carry them.

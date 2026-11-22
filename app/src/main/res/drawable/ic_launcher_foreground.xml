@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lantern icon B2 "Open glass" on the 108-unit adaptive grid. Nudged down 2 units so the
+     art (x 38-70, y 26-82) is centred in, and stays within, the 66dp safe circle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:translateY="2">
+        <!-- Frame; the inner rounded rect is the glass, cut out as negative space by evenOdd. -->
+        <path
+            android:fillColor="#F5B544"
+            android:fillType="evenOdd"
+            android:pathData="M50,32H58A12,12 0,0 1,70,44V68A12,12 0,0 1,58,80H50A12,12 0,0 1,38,68V44A12,12 0,0 1,50,32ZM51,38H57A7,7 0,0 1,64,45V67A7,7 0,0 1,57,74H51A7,7 0,0 1,44,67V45A7,7 0,0 1,51,38Z" />
+        <!-- Cap -->
+        <path
+            android:fillColor="#F5B544"
+            android:pathData="M49.5,24H58.5A2.5,2.5 0,0 1,58.5,29H49.5A2.5,2.5 0,0 1,49.5,24Z" />
+        <!-- Flame -->
+        <path
+            android:fillColor="#FFF1D0"
+            android:pathData="M54,46c4,6 6,10 6,14a6,6 0,0 1,-12,0c0,-4 2,-8 6,-14z" />
+    </group>
+</vector>
