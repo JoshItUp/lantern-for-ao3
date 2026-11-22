@@ -12,6 +12,6 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        container // Built at start, as before.
+        container // Built at start.
     }
 }

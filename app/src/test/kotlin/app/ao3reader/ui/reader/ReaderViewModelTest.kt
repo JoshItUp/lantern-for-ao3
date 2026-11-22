@@ -581,7 +581,7 @@ class ReaderViewModelTest {
         acts.state.value = mapOf(WORK to wa(kudosGiven = true, subscribed = true), 8L to wa())
         val vm = actionVm(); advanceUntilIdle()
         val ui = vm.actions.value
-        assertTrue(ui.signedIn && ui.known && ui.kudosGiven && ui.subscribed)
+        assertTrue(ui.signedIn && ui.kudosGiven && ui.subscribed)
         assertFalse(ui.bookmarked || ui.markedForLater)
         val before = vm.actions.value
         acts.state.value = acts.state.value + (8L to wa(bookmarked = true)); advanceUntilIdle()
@@ -647,7 +647,7 @@ class ReaderViewModelTest {
         // Shown as not subscribed (unknown); AO3 says already subscribed: tapping Subscribe must not unsubscribe.
         acts.refreshed = wa(subscribed = true)
         val vm = actionVm(); advanceUntilIdle()
-        assertFalse(vm.actions.value.known)
+        assertFalse(vm.actions.value.subscribed)
         vm.toggleSubscribe(); advanceUntilIdle()
         assertEquals(listOf("refresh:7"), acts.calls)
         assertEquals(listOf(ActionMessage("Subscribed")), msgs)

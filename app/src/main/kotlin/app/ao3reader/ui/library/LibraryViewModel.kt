@@ -20,7 +20,6 @@ import app.ao3reader.ao3.parse.SubscriptionPage
 import app.ao3reader.data.LibraryRepository
 import app.ao3reader.data.LibrarySection
 import app.ao3reader.data.Loaded
-import app.ao3reader.data.NotSignedInException
 import app.ao3reader.data.db.ProgressDao
 import app.ao3reader.data.db.ProgressEntity
 import app.ao3reader.data.db.ReadMarkDao
@@ -145,8 +144,6 @@ data class LibraryUiState(
 private val FRESH: Map<LibrarySection, SectionState> = LibrarySection.entries.associateWith { SectionState() }
 
 const val SIGN_IN_TO_SEE_LIBRARY = "Sign in to see your library"
-
-fun isNotSignedIn(e: FetchResult): Boolean = e is FetchResult.Failed && e.cause is NotSignedInException
 
 /**
  * Search's error copy. Errors only show while an account acts (otherwise the sign-in prompt shows), so

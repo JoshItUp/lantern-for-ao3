@@ -72,13 +72,14 @@ data class WorkListUiState(
     val downloadedIds: Set<Long> = emptySet(),
 )
 
-/** The header's Subscribe / Unsubscribe button for a series or author. */
+/**
+ * The header's Subscribe / Unsubscribe button for a series or author. A series page carries the
+ * subscribe state; an author's is read on the first tap.
+ */
 @Immutable
 data class ListSubscribeUi(
     /** False: no button. */
     val signedIn: Boolean = false,
-    /** AO3's state has been read (a series page carries it; an author's is read on the first tap). */
-    val known: Boolean = false,
     val subscribed: Boolean = false,
     val running: Boolean = false,
 )
@@ -120,16 +121,16 @@ class WorkListViewModel(
         val r = runner
         val key = listKey
         if (src == null || r == null || key == null) return@run MutableStateFlow(ListSubscribeUi()).asStateFlow()
-        fun ui(signedIn: Boolean, known: Boolean, subscribed: Boolean, running: Boolean) =
-            ListSubscribeUi(signedIn, known, subscribed, running)
+        fun ui(signedIn: Boolean, subscribed: Boolean, running: Boolean) =
+            ListSubscribeUi(signedIn, subscribed, running)
         combine(
             src.actingAccount.map { it != null }.distinctUntilChanged(),
             src.listState.map { it[key] }.distinctUntilChanged(),
             r.running.map { runKey in it }.distinctUntilChanged(),
-        ) { signedIn, l, running -> ui(signedIn, l != null, l?.subscribed == true, running) }
+        ) { signedIn, l, running -> ui(signedIn, l?.subscribed == true, running) }
             .stateIn(
                 viewModelScope, SharingStarted.Eagerly,
-                src.listState.value[key].let { l -> ui(src.actingAccount.value != null, l != null, l?.subscribed == true, runKey in r.running.value) },
+                src.listState.value[key].let { l -> ui(src.actingAccount.value != null, l?.subscribed == true, runKey in r.running.value) },
             )
     }
 

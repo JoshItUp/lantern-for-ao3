@@ -10,11 +10,9 @@ import kotlinx.serialization.json.contentOrNull
 object Autocomplete {
     /**
      * `[{"id":"X","name":"X"}]` -> names. Lenient: a plain string element is used as-is, and an object
-     * without `name` falls back to `id`. Invalid input yields an empty list.
+     * without `name` falls back to `id`. Null when [json] is not a JSON array (e.g. an HTML interstitial
+     * served as 200).
      */
-    fun parse(json: String): List<String> = parseOrNull(json) ?: emptyList()
-
-    /** Like [parse], but null when [json] is not a JSON array (e.g. an HTML interstitial served as 200). */
     fun parseOrNull(json: String): List<String>? = runCatching {
         val arr = Json.parseToJsonElement(json) as? JsonArray ?: return@runCatching null
         arr.mapNotNull { el -> nameOf(el)?.takeIf { it.isNotBlank() } }

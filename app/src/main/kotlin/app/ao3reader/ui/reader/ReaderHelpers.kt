@@ -12,7 +12,7 @@ internal fun readerErrorText(error: FetchResult): String = when {
     // An Ok page without chapter text: in practice AO3's sign-in page for registered-users-only works.
     error is FetchResult.Failed && error.cause is NotAChapterPageException -> "This work isn't available signed out."
     // A chapter the download doesn't have, while AO3 can't be reached.
-    error is FetchResult.Failed && error.cause is NotDownloadedException -> "Not downloaded · Update when online"
+    isNotDownloaded(error) -> "Not downloaded · Update when online"
     else -> "Couldn't load this chapter."
 }
 

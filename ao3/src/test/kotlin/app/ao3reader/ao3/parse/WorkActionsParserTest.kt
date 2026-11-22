@@ -98,13 +98,6 @@ class WorkActionsParserTest {
         assertEquals("https://archiveofourown.org/bookmarks/3000104", f!!.action.toString())
     }
 
-    @Test fun `comment form for a chapter`() {
-        val html = real("chapter_plain.html")
-        assertNotNull(WorkActionsParser.commentForm(html, plainUrl, 2000169L))
-        assertNull(WorkActionsParser.commentForm(html, plainUrl, 1L))
-        assertNotNull(WorkActionsParser.commentForm(html, plainUrl, null))
-    }
-
     @Test fun `real series pages are subscribed`() {
         for ((name, id) in listOf("series_a.html" to "4000101", "series_b.html" to "4000105")) {
             val l = WorkActionsParser.parseList(real(name), "https://archiveofourown.org/series/$id".toHttpUrl())

@@ -55,9 +55,9 @@ class WorkListParserTest {
     }
 
     @Test fun `series title from the page heading`() {
-        assertEquals("Series 2", WorkListParser.seriesTitle(res("series_a.html")))
-        assertEquals("Series 6", WorkListParser.seriesTitle(res("series_b.html")))
-        assertNull(WorkListParser.seriesTitle(res("user_works_p1.html")))
+        assertEquals("Series 2", WorkListParser.parse(res("series_a.html"), 1).seriesTitle)
+        assertEquals("Series 6", WorkListParser.parse(res("series_b.html"), 1).seriesTitle)
+        assertNull(WorkListParser.parse(res("user_works_p1.html"), 1).seriesTitle)
     }
 
     @Test fun `anonymous has no author link`() {

@@ -1,7 +1,6 @@
 package app.ao3reader.ao3.parse
 
 import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 

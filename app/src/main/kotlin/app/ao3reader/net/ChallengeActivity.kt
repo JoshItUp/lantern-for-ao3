@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.graphics.Color
 import android.os.Bundle
-import android.view.Gravity
 import android.view.ViewGroup
 import android.window.OnBackInvokedDispatcher
 import android.webkit.CookieManager
@@ -12,7 +11,6 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import java.lang.ref.WeakReference

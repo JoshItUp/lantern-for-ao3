@@ -19,6 +19,7 @@ import app.ao3reader.data.ActionRunner
 import app.ao3reader.data.ActionUnconfirmedException
 import app.ao3reader.data.ChapterSource
 import app.ao3reader.data.WorkActionSource
+import app.ao3reader.data.matches
 import app.ao3reader.ui.common.ActionMessage
 import app.ao3reader.ui.common.COMMENT_MAY_NOT_HAVE_POSTED
 import app.ao3reader.ui.common.WorkAction
@@ -83,8 +84,7 @@ data class ReaderUiState(
 data class ActionsUi(
     /** False: the row is replaced by a sign-in button. */
     val signedIn: Boolean = false,
-    /** AO3's state for this work has arrived (from a signed-in page); until then everything reads "not done". */
-    val known: Boolean = false,
+    // Until AO3's state for this work arrives (from a signed-in page) these read "not done".
     val kudosGiven: Boolean = false,
     val bookmarked: Boolean = false,
     val markedForLater: Boolean = false,
@@ -477,7 +477,6 @@ class ReaderViewModel(
 
     private fun actionsUi(signedIn: Boolean, a: WorkActions?, running: Set<WorkAction>) = ActionsUi(
         signedIn = signedIn,
-        known = a != null,
         kudosGiven = a?.kudosGiven == true,
         bookmarked = a?.bookmarked == true,
         markedForLater = a?.markedForLater == true,
@@ -749,7 +748,3 @@ class ReaderViewModel(
             }
     }
 }
-
-/** Chapters are matched by id, or by number when the id is unknown; never by title. */
-internal fun ChapterRef.matches(chapterId: Long?, number: Int): Boolean =
-    if (chapterId != null && this.chapterId != null) this.chapterId == chapterId else this.number == number

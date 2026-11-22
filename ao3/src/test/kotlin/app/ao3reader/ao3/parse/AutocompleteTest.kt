@@ -6,22 +6,17 @@ import org.junit.Test
 class AutocompleteTest {
     @Test fun `parses names`() {
         assertEquals(listOf("Fandom A"),
-            Autocomplete.parse("[{\"id\":\"Fandom A\",\"name\":\"Fandom A\"}]"))
+            Autocomplete.parseOrNull("[{\"id\":\"Fandom A\",\"name\":\"Fandom A\"}]"))
         val f = javaClass.getResource("/fixtures/autocomplete_fandom.json")!!.readText()
-        assertEquals(2, Autocomplete.parse(f).size)
+        assertEquals(2, Autocomplete.parseOrNull(f)!!.size)
     }
 
     @Test fun `plain string elements are used as names`() {
-        assertEquals(listOf("Alpha", "Beta"), Autocomplete.parse("[\"Alpha\", {\"id\":\"Beta\",\"name\":\"Beta\"}, \"\", 3]"))
+        assertEquals(listOf("Alpha", "Beta"), Autocomplete.parseOrNull("[\"Alpha\", {\"id\":\"Beta\",\"name\":\"Beta\"}, \"\", 3]"))
     }
 
     @Test fun `object without name falls back to id`() {
-        assertEquals(listOf("Gamma"), Autocomplete.parse("[{\"id\":\"Gamma\"}]"))
-    }
-
-    @Test fun `invalid json gives empty`() {
-        assertEquals(emptyList<String>(), Autocomplete.parse("not json"))
-        assertEquals(emptyList<String>(), Autocomplete.parse("{}"))
+        assertEquals(listOf("Gamma"), Autocomplete.parseOrNull("[{\"id\":\"Gamma\"}]"))
     }
 
     @Test fun `parseOrNull distinguishes an empty array from invalid input`() {

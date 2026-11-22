@@ -4,7 +4,6 @@ import app.ao3reader.ao3.net.FetchResult
 import app.ao3reader.ao3.net.Fetcher
 import kotlinx.coroutines.CompletableDeferred
 import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrl
 
 class FakeFetcher(val responses: MutableMap<String, FetchResult> = mutableMapOf()) : Fetcher {
     val calls = mutableListOf<String>()

@@ -47,7 +47,7 @@ object LibraryParser {
                 w.workId, dateRe.find(text)?.groupValues?.get(1), visits, text.contains("(Update available.)"),
             )
         }
-        return LibraryPage(works, extras, emptyMap(), page, hasNext(doc))
+        return LibraryPage(works, extras, emptyMap(), page, BlurbParser.hasNext(doc))
     }
 
     fun bookmarks(html: String, page: Int): LibraryPage {
@@ -67,13 +67,13 @@ object LibraryParser {
                 isRec = status?.selectFirst("span.rec") != null || li.selectFirst("span.rec") != null,
             )
         }
-        return LibraryPage(works, emptyMap(), extras, page, hasNext(doc))
+        return LibraryPage(works, emptyMap(), extras, page, BlurbParser.hasNext(doc))
     }
 
     fun subscriptions(html: String, page: Int, baseUrl: HttpUrl): SubscriptionPage {
         val doc = Jsoup.parse(html, Ao3Urls.BASE_URI)
         val items = doc.select("dl.subscription dt").mapNotNull { runCatching { subscription(it, baseUrl) }.getOrNull() }
-        return SubscriptionPage(items, page, hasNext(doc))
+        return SubscriptionPage(items, page, BlurbParser.hasNext(doc))
     }
 
     private fun subscription(dt: Element, baseUrl: HttpUrl): Subscription? {
@@ -91,6 +91,4 @@ object LibraryParser {
             else -> null
         }
     }
-
-    private fun hasNext(doc: org.jsoup.nodes.Document) = doc.select("ol.pagination li.next a[href]").isNotEmpty()
 }

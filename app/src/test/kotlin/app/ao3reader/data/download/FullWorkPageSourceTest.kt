@@ -12,11 +12,13 @@ import okhttp3.HttpUrl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class FullWorkPageSourceTest {
     private val id = 1000000L
     private val url = Ao3Urls.fullWork(id)
-    private val work = javaClass.getResource("/fixtures/full_work_multi.html")!!.readText()
+    // The :ao3 module's synthetic fixture, read in place (as the other :app tests read :ao3 fixtures).
+    private val work = File("../ao3/src/test/resources/fixtures/full_work_multi.html").readText()
     private val signIn = "<html><body><div id=\"main\">Please log in</div></body></html>"
 
     private class FakeAuthed(val fetcher: FakeFetcher = FakeFetcher(), var acting: Boolean = true) : AuthedFetch {

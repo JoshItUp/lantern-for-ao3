@@ -42,7 +42,6 @@ object WorkActionsParser {
     private val bookmarkAction = Regex("^/bookmarks/(\\d+)/?$")
     private val bookmarkEditHref = Regex("^(?:https?://[^/]+)?/bookmarks/(\\d+)/edit/?(?:[?#].*)?$")
     private val newBookmarkAction = Regex("^/works/\\d+/bookmarks/?$")
-    private val userHref = Regex("^(?:https?://[^/]+)?/users/([^/?#]+)/?(?:[?#].*)?$")
     private const val SUBSCRIBE_TYPE = "subscription[subscribable_type]"
 
     fun parse(html: String, baseUrl: HttpUrl): WorkActions {
@@ -51,7 +50,7 @@ object WorkActionsParser {
 
         val kudosEl: Element? = doc.selectFirst("form#new_kudo") ?: doc.select("form[action]").firstOrNull { path(it, baseUrl) == "/kudos" }
         val kudosGiven = user != null && doc.select("#kudos a[href]").any { a ->
-            userHref.find(a.attr("href"))?.groupValues?.get(1)?.let { decode(it).equals(user, ignoreCase = true) } == true
+            AccountParser.userHref.find(a.attr("href"))?.groupValues?.get(1)?.let { AccountParser.decodeUser(it).equals(user, ignoreCase = true) } == true
         }
 
         val bookmark = bookmarkFormIn(doc, baseUrl)
@@ -100,13 +99,6 @@ object WorkActionsParser {
 
     /** The bookmark form on a work page or a bookmark edit page. */
     fun bookmarkForm(html: String, baseUrl: HttpUrl): Ao3Form? = bookmarkFormIn(Jsoup.parse(html), baseUrl)
-
-    /** The comment form for [chapterId] (any comment form when null). */
-    fun commentForm(html: String, baseUrl: HttpUrl, chapterId: Long?): Ao3Form? {
-        val forms = Jsoup.parse(html).select("form.new_comment[action]").filter { path(it, baseUrl).endsWith("/comments") }
-        val el: Element? = if (chapterId == null) forms.firstOrNull() else forms.firstOrNull { path(it, baseUrl) == "/chapters/$chapterId/comments" }
-        return el?.let { FormParser.parse(it, baseUrl) }
-    }
 
     /** The bookmark as the form holds it. Rails checkbox pairs: the last value wins. */
     fun bookmarkInput(form: Ao3Form): BookmarkInput = BookmarkInput(
@@ -157,12 +149,6 @@ object WorkActionsParser {
 
     private fun path(form: Element, baseUrl: HttpUrl): String =
         baseUrl.resolve(form.attr("action"))?.encodedPath ?: ""
-
-    private fun decode(s: String): String = try {
-        java.net.URLDecoder.decode(s.replace("+", "%2B"), "UTF-8")
-    } catch (_: IllegalArgumentException) {
-        s
-    }
 }
 
 /** The last value of [name] (Rails reads the last of repeated names). */

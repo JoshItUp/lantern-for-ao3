@@ -202,8 +202,8 @@ class Session(
      * out. [interactive] false (background work) also keeps the re-login from showing the challenge solver.
      * [forceNetwork] true never answers from the HTTP cache ([Fetcher.get]).
      */
-    suspend fun authedGet(url: HttpUrl, accept: String? = null, interactive: Boolean = true, forceNetwork: Boolean = false): FetchResult =
-        authed(interactive, isPost = false) { fetcher.get(url, accept, interactive, forceNetwork = forceNetwork) }
+    suspend fun authedGet(url: HttpUrl, interactive: Boolean = true, forceNetwork: Boolean = false): FetchResult =
+        authed(interactive, isPost = false) { fetcher.get(url, interactive = interactive, forceNetwork = forceNetwork) }
 
     /**
      * Posts [form] with [overrides] applied: every field named in [overrides] is replaced (at the position

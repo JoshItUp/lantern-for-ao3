@@ -263,12 +263,12 @@ class SessionTest {
         store.save("Me", "pw")
         fake.ok(page, """{"a":1}""")
         val s = session()
-        s.authedGet(page, accept = "application/json")
+        s.authedGet(page)
         fake.responses[page.toString()] = FetchResult.Failed(null)
         assertEquals(FetchResult.Failed(null), s.authedGet(page))
         assertTrue(fake.posts.isEmpty())
         assertTrue(s.state.value.signedIn)
-        assertEquals(listOf("application/json", null), fake.accepts)
+        assertEquals(listOf(null, null), fake.accepts)
     }
 
     @Test fun `concurrent callers share one re-login`() = runTest {

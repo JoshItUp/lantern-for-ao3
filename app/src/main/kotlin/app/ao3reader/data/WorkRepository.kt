@@ -30,6 +30,10 @@ interface ChapterSource {
     fun listUpdates(workId: Long): Flow<List<ChapterRef>> = emptyFlow()
 }
 
+/** Chapters are matched by id, or by number when the id is unknown on either side; never by title. */
+internal fun ChapterRef.matches(chapterId: Long?, number: Int): Boolean =
+    if (chapterId != null && this.chapterId != null) this.chapterId == chapterId else this.number == number
+
 /** An Ok response that has no chapter text (e.g. AO3's sign-in page for a registered-users-only work). */
 class NotAChapterPageException : IllegalStateException("not a chapter page")
 
@@ -128,11 +132,11 @@ class WorkRepository(
 
     /**
      * A background signed-in GET of a chapter shown without a fetch (from the cache or a download), so it
-     * appears in the owner's AO3 History. Its page feeds [actions], goes to [onPage] and [onChapterPage], and
-     * refreshes the chapter-cache entry; the reader is not re-rendered. Nothing while no account acts.
+     * appears in the owner's AO3 History. Its page feeds [actions], goes to [onChapterPage], and refreshes
+     * the chapter-cache entry; the reader is not re-rendered. Nothing while no account acts.
      * At most one per chapter within [VISIT_DEBOUNCE_MS]; a visit that fails (not Ok, or throws) frees its slot.
      */
-    fun visitInBackground(workId: Long, ref: ChapterRef, onPage: (html: String) -> Unit = {}) {
+    fun visitInBackground(workId: Long, ref: ChapterRef) {
         val signedIn = authed?.takeIf { it.isActing() } ?: return
         val key = keyOf(ref)
         val fk = flightKey(workId, key)
@@ -155,7 +159,6 @@ class WorkRepository(
                     withContext(ioDispatcher) { try { cache.put(workId, key, r.html) } catch (_: IOException) {} }
                 }
                 notePage(workId, r.html)
-                onPage(r.html)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {

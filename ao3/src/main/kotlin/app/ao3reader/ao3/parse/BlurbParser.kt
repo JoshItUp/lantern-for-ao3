@@ -12,9 +12,11 @@ object BlurbParser {
 
     fun parsePage(doc: Document, page: Int): WorkPage {
         val works = doc.select("li.blurb").mapNotNull { runCatching { parseBlurb(it) }.getOrNull() }
-        val hasNext = doc.select("ol.pagination li.next a[href]").isNotEmpty()
-        return WorkPage(works, page, hasNext)
+        return WorkPage(works, page, hasNext(doc))
     }
+
+    /** The listing's pagination has a "Next" link. */
+    internal fun hasNext(doc: Document): Boolean = doc.select("ol.pagination li.next a[href]").isNotEmpty()
 
     /** One `li.blurb` -> WorkBlurb; null when it is not a work (series/mystery/deleted). */
     fun parseBlurb(li: Element): WorkBlurb? {
