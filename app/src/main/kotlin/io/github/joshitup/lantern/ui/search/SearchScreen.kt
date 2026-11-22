@@ -1,6 +1,11 @@
 package io.github.joshitup.lantern.ui.search
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -78,6 +83,8 @@ import io.github.joshitup.lantern.ui.common.OpenWorkList
 import io.github.joshitup.lantern.ui.common.AppIcons
 import io.github.joshitup.lantern.ui.common.Hint
 import io.github.joshitup.lantern.ui.common.Loading
+import io.github.joshitup.lantern.ui.update.UpdateStrip
+import io.github.joshitup.lantern.update.ReleaseInfo
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -97,6 +104,8 @@ fun errorMessage(e: FetchResult): String = when (e) {
 
 /** "Title — Ch 4/12" (or "Ch 4/?" when the total is unknown). */
 fun continueLabel(p: ProgressEntity): String = "${p.workTitle} — Ch ${p.chapterNumber}/${p.chaptersTotal ?: "?"}"
+
+private const val UPDATE_STRIP_MS = 220
 
 /** Preset dialog modes: a new preset from the current query, or renaming an existing one. */
 private sealed interface NameDialog {
@@ -120,6 +129,10 @@ fun SearchScreen(
     onAccount: () -> Unit,
     onOpenWorkList: OpenWorkList,
     onOpenWork: OpenWork,
+    /** A newer release for the strip above Continue; null hides it. */
+    update: ReleaseInfo? = null,
+    onUpdateOpen: () -> Unit = {},
+    onUpdateDismiss: () -> Unit = {},
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
@@ -239,6 +252,19 @@ fun SearchScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            update?.let { release ->
+                // Grows in rather than popping, so the list below never jumps; animateItem fades it out.
+                item(key = "update", contentType = "update") {
+                    val visible = remember { MutableTransitionState(false).apply { targetState = true } }
+                    AnimatedVisibility(
+                        visibleState = visible,
+                        modifier = Modifier.animateItem(fadeInSpec = null),
+                        enter = expandVertically(tween(UPDATE_STRIP_MS)) + fadeIn(tween(UPDATE_STRIP_MS)),
+                    ) {
+                        UpdateStrip(release, onOpen = onUpdateOpen, onDismiss = onUpdateDismiss)
+                    }
+                }
+            }
             state.continueReading?.let { p ->
                 item(key = "continue", contentType = "continue") {
                     ContinueStrip(p) { onOpenWork(p.workId, p.chapterId, p.chapterNumber) }

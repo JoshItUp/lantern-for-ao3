@@ -58,6 +58,19 @@ import io.github.joshitup.lantern.ui.search.SearchViewModel
 import io.github.joshitup.lantern.ui.worklist.WorkListScreen
 import io.github.joshitup.lantern.ui.worklist.WorkListViewModel
 import io.github.joshitup.lantern.ao3.parse.Ao3Urls
+import io.github.joshitup.lantern.ui.update.UpdateSheet
+import io.github.joshitup.lantern.ui.update.UpdateUiState
+import io.github.joshitup.lantern.ui.update.UpdateViewModel
+import io.github.joshitup.lantern.ui.update.WhatsNewSheet
+import io.github.joshitup.lantern.update.UpdateState
+import android.util.Log
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import okhttp3.HttpUrl
 
@@ -124,6 +137,9 @@ fun AppNav(container: AppContainer) {
     val showBar by remember { derivedStateOf { entry?.destination?.route.let { it == null || it in Routes.TABS } } }
     val libraryTab by remember { derivedStateOf { entry?.destination?.route == Routes.LIBRARY } }
     val searchReselect = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
+    // Activity-scoped (outside the NavHost): the strip, the sheet, About and "What's new" share it.
+    val updates: UpdateViewModel = viewModel(factory = UpdateViewModel.factory(container))
+    val updateState by updates.state.collectAsStateWithLifecycle()
 
     fun openAccount() = nav.navigate(Routes.ACCOUNT) { launchSingleTop = true }
 
@@ -188,6 +204,9 @@ fun AppNav(container: AppContainer) {
                     onAccount = ::openAccount,
                     onOpenWorkList = ::openWorkList,
                     onOpenWork = ::openWork,
+                    update = updateState.strip,
+                    onUpdateOpen = updates::openSheet,
+                    onUpdateDismiss = updates::later,
                 )
             }
             composable(Routes.LIBRARY) {
@@ -225,7 +244,7 @@ fun AppNav(container: AppContainer) {
             }
             composable(Routes.ACCOUNT) { e ->
                 val vm: AccountViewModel = viewModel(factory = AccountViewModel.factory(container))
-                AccountScreen(vm, onBack = { if (nav.currentBackStackEntry?.id == e.id) nav.popBackStack() })
+                AccountScreen(vm, updates, onBack = { if (nav.currentBackStackEntry?.id == e.id) nav.popBackStack() })
             }
             composable(
                 Routes.READER,
@@ -265,6 +284,64 @@ fun AppNav(container: AppContainer) {
                 onLibrary = { if (!libraryTab) nav.switchTab(Routes.LIBRARY) },
             )
         }
+    }
+
+    UpdateHost(container, updates, updateState)
+}
+
+/** How long a fresh confirmation waits before the UI launches it itself (the receiver's own launch pauses us first). */
+private const val CONFIRM_GRACE_MS = 700L
+
+/**
+ * The update sheet, the launch "What's new" and the install hand-offs that need the activity: the
+ * confirmation the receiver couldn't show, and the retry once "Install unknown apps" was granted.
+ */
+@Composable
+private fun UpdateHost(container: AppContainer, updates: UpdateViewModel, state: UpdateUiState) {
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val lifeState by lifecycle.currentStateFlow.collectAsStateWithLifecycle()
+    val resumed = lifeState.isAtLeast(Lifecycle.State.RESUMED)
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { updates.onResume() }
+
+    // On entering AwaitingConfirmation while resumed, and again on every resume while it lasts.
+    val install = state.install
+    LaunchedEffect(install, resumed) {
+        if (!resumed || install !is UpdateState.AwaitingConfirmation) return@LaunchedEffect
+        delay(CONFIRM_GRACE_MS) // cancelled if the receiver's launch pauses us meanwhile
+        try {
+            context.startActivity(install.intent)
+        } catch (e: RuntimeException) {
+            Log.w("AppNav", "confirmation launch failed: ${e::class.java.simpleName}")
+        }
+        updates.confirmationLaunched() // the controller's watchdog fails it if nothing comes back
+    }
+
+    // After the first frame: startup never waits on DataStore or the notes fetch.
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        updates.loadWhatsNew()
+    }
+
+    val release = state.release
+    if (state.sheetOpen && release != null) {
+        UpdateSheet(
+            release = release,
+            install = install,
+            onLater = updates::later,
+            onDownload = updates::download,
+            onAllowInstall = {
+                try {
+                    context.startActivity(container.updateInstaller.permissionIntent())
+                } catch (e: RuntimeException) {
+                    Log.w("AppNav", "permission screen failed: ${e::class.java.simpleName}")
+                }
+            },
+            onDismiss = updates::closeSheet,
+        )
+    } else {
+        state.whatsNew?.let { WhatsNewSheet(it, onDismiss = updates::whatsNewShown) }
     }
 }
 

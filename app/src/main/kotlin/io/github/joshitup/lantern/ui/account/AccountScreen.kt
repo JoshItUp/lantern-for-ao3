@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +25,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +33,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -45,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -53,11 +57,13 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.joshitup.lantern.BuildConfig
 import io.github.joshitup.lantern.ui.common.AppIcons
+import io.github.joshitup.lantern.ui.update.UpdateViewModel
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun AccountScreen(vm: AccountViewModel, onBack: () -> Unit) {
+fun AccountScreen(vm: AccountViewModel, updates: UpdateViewModel, onBack: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(state.close) {
@@ -92,8 +98,47 @@ fun AccountScreen(vm: AccountViewModel, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (state.signedIn) SignedIn(state, vm::signOutTap) else SignInForm(state, vm)
+            About(updates)
         }
     }
+}
+
+private const val REPO_URL = "https://github.com/${BuildConfig.UPDATE_REPO}"
+
+/** The app's identity (it is unofficial), version, the update check and the project links. */
+@Composable
+private fun About(updates: UpdateViewModel) {
+    val state by updates.state.collectAsStateWithLifecycle()
+    val uri = LocalUriHandler.current
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Spacer(Modifier.height(12.dp))
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Spacer(Modifier.height(4.dp))
+    Text("Lantern", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground)
+    Text(
+        "An unofficial reader for AO3 · not affiliated with the OTW or AO3",
+        style = MaterialTheme.typography.bodySmall,
+        color = muted,
+    )
+    Text("Version ${updates.versionName}", style = MaterialTheme.typography.bodyMedium, color = muted)
+    OutlinedButton(
+        onClick = updates::checkNow,
+        enabled = !state.checking,
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        if (state.checking) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+        } else {
+            Text("Check for updates")
+        }
+    }
+    state.checkMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = muted) }
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        TextButton(onClick = { uri.openUri("$REPO_URL/releases") }) { Text("Release notes") }
+        TextButton(onClick = { uri.openUri(REPO_URL) }) { Text("Source code") }
+    }
+    Text("License: MIT", style = MaterialTheme.typography.bodySmall, color = muted)
 }
 
 @Composable
