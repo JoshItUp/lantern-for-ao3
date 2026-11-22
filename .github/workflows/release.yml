@@ -1,0 +1,171 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump (the first release is always 1.0.0)
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      APKSIGNER_BUILD_TOOLS: '37.0.0'
+    steps:
+      - name: Check the branch and secrets
+        env:
+          LANTERN_KEYSTORE_B64: ${{ secrets.LANTERN_KEYSTORE_B64 }}
+          LANTERN_KEYSTORE_PASSWORD: ${{ secrets.LANTERN_KEYSTORE_PASSWORD }}
+          LANTERN_KEY_ALIAS: ${{ secrets.LANTERN_KEY_ALIAS }}
+          LANTERN_KEY_PASSWORD: ${{ secrets.LANTERN_KEY_PASSWORD }}
+          LANTERN_CERT_SHA256: ${{ secrets.LANTERN_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Releases run from main only (this run is on $GITHUB_REF)."
+            exit 1
+          fi
+          missing=""
+          for name in LANTERN_KEYSTORE_B64 LANTERN_KEYSTORE_PASSWORD LANTERN_KEY_ALIAS LANTERN_KEY_PASSWORD LANTERN_CERT_SHA256; do
+            if [ -z "${!name:-}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing. Add them under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          if ! [[ "$LANTERN_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::LANTERN_CERT_SHA256 must be 64 lowercase hex characters (no colons)."
+            exit 1
+          fi
+
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-37.2 build-tools;37.0.0'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Changelog script tests
+        run: python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+
+      - name: Next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          V=$(python .github/scripts/changelog.py next-version --bump "$BUMP")
+          echo "Releasing $V"
+          echo "V=$V" >> "$GITHUB_ENV"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Gradle tests
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :ao3:test :app:testDebugUnitTest
+
+      - name: Changelog section
+        run: |
+          set -euo pipefail
+          python .github/scripts/changelog.py section --version "$V" --date "$(date -u +%F)" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Decode the keystore
+        env:
+          LANTERN_KEYSTORE_B64: ${{ secrets.LANTERN_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$LANTERN_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/k.jks"
+          echo "LANTERN_KEYSTORE_FILE=$RUNNER_TEMP/k.jks" >> "$GITHUB_ENV"
+
+      - name: Build the release APK
+        env:
+          LANTERN_KEYSTORE_PASSWORD: ${{ secrets.LANTERN_KEYSTORE_PASSWORD }}
+          LANTERN_KEY_ALIAS: ${{ secrets.LANTERN_KEY_ALIAS }}
+          LANTERN_KEY_PASSWORD: ${{ secrets.LANTERN_KEY_PASSWORD }}
+          LANTERN_CERT_SHA256: ${{ secrets.LANTERN_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon :app:assembleRelease -Plantern.version="$V" -Plantern.certSha256="$LANTERN_CERT_SHA256"
+
+      - name: Verify the APK signature
+        env:
+          LANTERN_CERT_SHA256: ${{ secrets.LANTERN_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/release/app-release.apk
+          apksigner="$ANDROID_HOME/build-tools/$APKSIGNER_BUILD_TOOLS/apksigner"
+          out=$("$apksigner" verify --print-certs "$apk")
+          signers=$(printf '%s\n' "$out" | grep -c '^Signer #[0-9]* certificate SHA-256 digest:' || true)
+          actual=$(printf '%s\n' "$out" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr 'A-F' 'a-f' | tr -d '[:space:]')
+          if [ "$signers" != "1" ]; then
+            echo "::error::Expected exactly one signer, found $signers."
+            exit 1
+          fi
+          if [ "$actual" != "$LANTERN_CERT_SHA256" ]; then
+            echo "::error::The APK's signing certificate doesn't match LANTERN_CERT_SHA256 (got $actual)."
+            exit 1
+          fi
+          cp "$apk" "lantern-$V.apk"
+          echo "Signed with the expected certificate."
+
+      - name: Commit the changelog
+        id: push
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore(release): v$V"
+          git push origin HEAD:main
+
+      - name: Publish the release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "v$V" "lantern-$V.apk" \
+            --target "$(git rev-parse HEAD)" \
+            --title "Lantern $V" \
+            --notes-file "$RUNNER_TEMP/notes.md"
+
+      - name: Revert the changelog commit
+        if: failure() && steps.release.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # A partly created release (a draft or a tag) must not outlive the revert.
+          gh release delete "v$V" --yes --cleanup-tag || true
+          git revert --no-edit HEAD && git push origin HEAD:main
+
+      - name: Delete the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/k.jks"
