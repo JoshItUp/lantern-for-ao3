@@ -43,6 +43,8 @@ import io.github.joshitup.lantern.net.PersistentCookieJar
 import io.github.joshitup.lantern.net.cachedUserAgent
 import io.github.joshitup.lantern.net.clearAo3SessionCookies
 import io.github.joshitup.lantern.net.WebViewChallengeSolver
+import io.github.joshitup.lantern.update.UpdateClient
+import io.github.joshitup.lantern.update.UpdateRepository
 import okhttp3.Cache
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
@@ -181,7 +183,25 @@ class AppContainer(val context: Context) {
         DownloadRepository(db.downloadDao(), downloadStore, { DownloadWorker.enqueue(context) })
     }
 
+    /** Update traffic uses its own client: no AO3 cookies or interceptors, and no WebView. */
+    private val updateHttp: OkHttpClient by lazy { UpdateClient.httpClient() }
+
+    val updateClient: UpdateClient by lazy { UpdateClient(updateHttp, userAgent = "Lantern/${BuildConfig.VERSION_NAME}") }
+
+    val updateRepo: UpdateRepository by lazy {
+        UpdateRepository(updateClient, settings, BuildConfig.VERSION_CODE, System::currentTimeMillis, appScope)
+    }
+
     init {
+        // Update check at start: off the main thread, throttled to once a day, never fatal.
+        appScope.launch {
+            try {
+                updateRepo.maybeCheck()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Log.w(TAG, "update check failed: ${e::class.java.simpleName}")
+            }
+        }
         // Before the worker or any queue call runs: clear leftover temp dirs and fail rows a dead process left.
         // A failed clean-up must not crash the app; [DownloadRepository.ready] completes either way.
         appScope.launch {

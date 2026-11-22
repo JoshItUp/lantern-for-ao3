@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -39,7 +40,24 @@ class SettingsStore(private val store: DataStore<Preferences>) {
         store.edit { it[NOTIFICATIONS_ASKED] = true }
     }
 
+    /** Update state: when the last check ran, which release the user dismissed, the last version whose notes were seen, notes saved before an install. */
+    val updateLastCheck: Flow<Long?> = store.data.map { it[UPDATE_LAST_CHECK] }
+    val updateDismissedCode: Flow<Int> = store.data.map { it[UPDATE_DISMISSED] ?: 0 }
+    val updateLastSeenCode: Flow<Int?> = store.data.map { it[UPDATE_LAST_SEEN] }
+    val updatePendingNotes: Flow<String?> = store.data.map { it[UPDATE_PENDING] }
+
+    suspend fun setUpdateLastCheck(ms: Long) { store.edit { it[UPDATE_LAST_CHECK] = ms } }
+    suspend fun setUpdateDismissedCode(code: Int) { store.edit { it[UPDATE_DISMISSED] = code } }
+    suspend fun setUpdateLastSeenCode(code: Int) { store.edit { it[UPDATE_LAST_SEEN] = code } }
+    suspend fun setUpdatePendingNotes(json: String?) {
+        store.edit { if (json == null) it.remove(UPDATE_PENDING) else it[UPDATE_PENDING] = json }
+    }
+
     private companion object {
+        val UPDATE_LAST_CHECK = longPreferencesKey("update.lastCheck")
+        val UPDATE_DISMISSED = intPreferencesKey("update.dismissedCode")
+        val UPDATE_LAST_SEEN = intPreferencesKey("update.lastSeenCode")
+        val UPDATE_PENDING = stringPreferencesKey("update.pendingNotes")
         const val MIN_SP = 14
         const val MAX_SP = 28
         const val DEFAULT_SP = 18
