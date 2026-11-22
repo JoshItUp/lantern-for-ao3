@@ -40,9 +40,18 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-37.2 build-tools;37.0.0'
+          packages: 'platform-tools'
+
+      - name: Install the SDK platform and build tools
+        run: |
+          set -euo pipefail
+          sdkmanager --install "platforms;android-37.2" "build-tools;37.0.0" > /dev/null
+          for dir in platforms/android-37.2 build-tools/37.0.0; do
+            if [ ! -d "$ANDROID_HOME/$dir" ]; then
+              echo "::error::sdkmanager did not install $dir. Set setup-android's cmdline-tools-version to a build that supports minor API levels."
+              exit 1
+            fi
+          done
 
       - name: Gradle tests
-        run: |
-          chmod +x ./gradlew
-          ./gradlew --no-daemon :ao3:test :app:testDebugUnitTest
+        run: ./gradlew --no-daemon :ao3:test :app:testDebugUnitTest

@@ -50,9 +50,11 @@ jobs:
             exit 1
           fi
 
+      # The latest main, not the dispatch sha: a run queued behind another release must see its tag.
       - name: Check out
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
       - name: Set up JDK
@@ -64,7 +66,18 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-37.2 build-tools;37.0.0'
+          packages: 'platform-tools'
+
+      - name: Install the SDK platform and build tools
+        run: |
+          set -euo pipefail
+          sdkmanager --install "platforms;android-37.2" "build-tools;$APKSIGNER_BUILD_TOOLS" > /dev/null
+          for dir in "platforms/android-37.2" "build-tools/$APKSIGNER_BUILD_TOOLS"; do
+            if [ ! -d "$ANDROID_HOME/$dir" ]; then
+              echo "::error::sdkmanager did not install $dir. Set setup-android's cmdline-tools-version to a build that supports minor API levels."
+              exit 1
+            fi
+          done
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -87,7 +100,6 @@ jobs:
 
       - name: Gradle tests
         run: |
-          chmod +x ./gradlew
           ./gradlew --no-daemon :ao3:test :app:testDebugUnitTest
 
       - name: Changelog section
@@ -136,14 +148,18 @@ jobs:
           echo "Signed with the expected certificate."
 
       - name: Commit the changelog
-        id: push
+        id: commit
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add CHANGELOG.md
           git commit -m "chore(release): v$V"
-          git push origin HEAD:main
+          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Push the changelog
+        id: push
+        run: git push origin "$RELEASE_SHA:refs/heads/main"
 
       - name: Publish the release
         id: release
@@ -152,19 +168,39 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "v$V" "lantern-$V.apk" \
-            --target "$(git rev-parse HEAD)" \
+            --target "$RELEASE_SHA" \
             --title "Lantern $V" \
             --notes-file "$RUNNER_TEMP/notes.md"
 
+      # Runs on failure and on cancellation (failure() is false when a run is cancelled). A push that
+      # failed or was cancelled may still have landed, so the script checks origin/main itself.
       - name: Revert the changelog commit
-        if: failure() && steps.release.outcome == 'failure'
+        if: >-
+          always() && steps.release.outcome != 'success' &&
+          (steps.push.outcome == 'success' || steps.push.outcome == 'failure' || steps.push.outcome == 'cancelled')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
           # A partly created release (a draft or a tag) must not outlive the revert.
           gh release delete "v$V" --yes --cleanup-tag || true
-          git revert --no-edit HEAD && git push origin HEAD:main
+          for attempt in 1 2; do
+            if git fetch origin main; then
+              if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/main; then
+                echo "The changelog commit never reached main; nothing to revert."
+                exit 0
+              fi
+              git reset -q --hard origin/main
+              if git revert --no-edit "$RELEASE_SHA" && git push origin HEAD:refs/heads/main; then
+                echo "Reverted $RELEASE_SHA on main."
+                exit 0
+              fi
+              git revert --abort 2>/dev/null || true
+            fi
+            echo "Revert attempt $attempt failed; retrying on a fresh origin/main."
+          done
+          echo "::error::Couldn't revert the changelog commit $RELEASE_SHA on main. Revert it by hand before the next release."
+          exit 1
 
       - name: Delete the keystore
         if: always()

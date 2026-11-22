@@ -181,6 +181,51 @@ class ChangelogTest(unittest.TestCase):
             "### Changed\n- Clarify the install steps\n- Cover the parser",
         )
 
+    def test_bump_past_99_fails(self):
+        self.tag("v1.99.99")
+        self.commit("feat: something")
+        for bump in ("patch", "minor"):
+            result = self.run_script("next-version", "--bump", bump)
+            self.assertNotEqual(result.returncode, 0, bump)
+            self.assertEqual(result.stdout.strip(), "")
+        result = self.run_script("next-version", "--bump", "major")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "2.0.0")
+
+    def test_changelog_without_unreleased_heading(self):
+        self.write_changelog(HEADER + "## [1.0.0] - 2025-12-01\n\n### Added\n- Old feature\n")
+        self.tag("v1.0.0")
+        self.commit("fix: a bug")
+        out = self.section("1.0.1", "2026-01-02")
+        self.assertEqual(out.strip(), "### Fixed\n- A bug")
+        self.assertEqual(
+            self.read_changelog(),
+            HEADER
+            + "## [Unreleased]\n\n"
+            + "## [1.0.1] - 2026-01-02\n\n### Fixed\n- A bug\n\n"
+            + "## [1.0.0] - 2025-12-01\n\n### Added\n- Old feature\n",
+        )
+
+    def test_existing_version_section_refused(self):
+        original = HEADER + "## [Unreleased]\n\n## [1.0.1] - 2026-01-01\n\n### Fixed\n- A bug\n"
+        self.write_changelog(original)
+        self.tag("v1.0.0")
+        self.commit("fix: another bug")
+        result = self.run_script("section", "--version", "1.0.1", "--date", "2026-01-02")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already has a section for 1.0.1", result.stderr)
+        self.assertEqual(self.read_changelog(), original)
+
+    def test_pr_merge_with_empty_body_uses_branch_name(self):
+        self.tag("v1.0.0")
+        self.git("checkout", "-q", "-b", "polish/reader-fonts")
+        self.commit("feat: inner commit")
+        self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--no-ff", "polish/reader-fonts",
+                 "-m", "Merge pull request #9 from owner/polish/reader-fonts")
+        out = self.section("1.0.1", "2026-01-02")
+        self.assertEqual(out.strip(), "### Changed\n- Polish/reader-fonts")
+
 
 if __name__ == "__main__":
     unittest.main()
