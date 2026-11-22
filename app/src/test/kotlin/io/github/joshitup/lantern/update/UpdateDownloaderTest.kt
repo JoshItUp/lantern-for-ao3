@@ -27,8 +27,10 @@ class UpdateDownloaderTest {
     @Before fun setUp() {
         server = MockWebServer().also { it.start() }
         dir = File(tmp.root, "updates")
-        downloader = UpdateDownloader(UpdateClient(OkHttpClient(), server.url("/"), "Lantern/1.0.0", "Owner/repo"), dir)
+        downloader = UpdateDownloader(client(), dir, requireHttps = false) // MockWebServer is plain http
     }
+
+    private fun client() = UpdateClient(OkHttpClient(), server.url("/"), "Lantern/1.0.0", "Owner/repo")
 
     @After fun tearDown() = server.shutdown()
 
@@ -79,5 +81,16 @@ class UpdateDownloaderTest {
         server.enqueue(MockResponse().setBody(Buffer().write(bytes)))
         downloader.download(release(bytes.size.toLong())) {}
         assertEquals(listOf("lantern-1.2.3.apk"), dir.list()?.toList())
+    }
+
+    @Test fun nonHttpsFinalUrl_throws_andDeletesPart() = runTest {
+        server.enqueue(MockResponse().setBody(Buffer().write(bytes)))
+        try {
+            UpdateDownloader(client(), dir).download(release(bytes.size.toLong())) {}
+            fail("expected IOException")
+        } catch (e: IOException) {
+            // expected
+        }
+        assertEquals(emptyList<String>(), dir.list()?.toList().orEmpty())
     }
 }

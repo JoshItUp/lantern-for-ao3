@@ -7,7 +7,12 @@ import java.io.File
 import java.io.IOException
 
 /** Downloads a release APK into [dir] (cacheDir/updates), keeping only that one file. */
-class UpdateDownloader(private val client: UpdateClient, private val dir: File) {
+class UpdateDownloader(
+    private val client: UpdateClient,
+    private val dir: File,
+    /** Off only in tests (MockWebServer is plain http). */
+    private val requireHttps: Boolean = true,
+) {
 
     /** Writes `lantern-X.Y.Z.apk.part`, checks its size against [ReleaseInfo.apkSize], then renames it. Throws [IOException]. */
     suspend fun download(release: ReleaseInfo, onProgress: (Float) -> Unit): File = withContext(Dispatchers.IO) {
@@ -18,6 +23,8 @@ class UpdateDownloader(private val client: UpdateClient, private val dir: File) 
         try {
             client.download(release.apkUrl).use { resp ->
                 if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
+                // The final URL after redirects: never accept a downgrade to plain http.
+                if (requireHttps && !resp.request.url.isHttps) throw IOException("not https")
                 val body = resp.body
                 val total = body.contentLength().takeIf { it > 0 } ?: release.apkSize
                 var written = 0L

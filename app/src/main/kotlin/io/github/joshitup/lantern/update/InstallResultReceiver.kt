@@ -19,6 +19,8 @@ class InstallResultReceiver : BroadcastReceiver() {
                     controller(context).reportInstallFailure("no confirmation from the system")
                     return
                 }
+                // Kept for the UI: background-activity-launch rules can block this launch without an error.
+                controller(context).awaitConfirmation(confirm)
                 try {
                     context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 } catch (e: RuntimeException) {
