@@ -31,6 +31,7 @@ class UpdateRepository(
 
     /** At most once per 24 hours; the attempt is recorded even when it fails, so a flaky network is not retried at once. */
     suspend fun maybeCheck() {
+        seed()
         val last = settings.updateLastCheck.first()
         if (last != null && clock() - last < CHECK_INTERVAL_MS) return
         try {
@@ -41,14 +42,43 @@ class UpdateRepository(
     }
 
     suspend fun checkNow(): CheckResult {
+        seed()
         val latest = try {
             source.latest()
         } catch (e: IOException) {
             return CheckResult.Failed("Couldn't check for updates")
         }
-        if (latest == null || latest.version.code <= installedCode) return CheckResult.UpToDate
-        _available.value = latest
+        if (latest == null || latest.version.code <= installedCode) {
+            publish(null)
+            return CheckResult.UpToDate
+        }
+        publish(latest)
         return CheckResult.Available(latest)
+    }
+
+    private var seeded = false
+
+    /** Restores the saved newer release once (a restart inside the throttle window must keep the strip); drops it if the install caught up. */
+    private suspend fun seed() {
+        if (seeded) return
+        seeded = true
+        val saved = settings.updateAvailable.first()?.let { decode(it) } ?: return
+        if (saved.version.code > installedCode) {
+            if (_available.value == null) _available.value = saved
+        } else {
+            settings.setUpdateAvailable(null)
+        }
+    }
+
+    private suspend fun publish(release: ReleaseInfo?) {
+        _available.value = release
+        settings.setUpdateAvailable(release?.let { json.encodeToString(ReleaseInfo.serializer(), it) })
+    }
+
+    private fun decode(text: String): ReleaseInfo? = try {
+        json.decodeFromString(ReleaseInfo.serializer(), text)
+    } catch (e: IllegalArgumentException) {
+        null
     }
 
     suspend fun dismiss() {
@@ -69,13 +99,7 @@ class UpdateRepository(
             return null
         }
         if (installedCode <= lastSeen) return null
-        val pending = settings.updatePendingNotes.first()?.let {
-            try {
-                json.decodeFromString(ReleaseInfo.serializer(), it)
-            } catch (e: IllegalArgumentException) {
-                null
-            }
-        }
+        val pending = settings.updatePendingNotes.first()?.let { decode(it) }
         val notes = if (pending != null && pending.version.code == installedCode) {
             pending
         } else {
@@ -85,8 +109,7 @@ class UpdateRepository(
                 return null // offline: keep lastSeen so the next launch tries again
             }
         }
-        settings.setUpdatePendingNotes(null)
-        settings.setUpdateLastSeenCode(installedCode)
+        settings.markWhatsNewSeen(installedCode)
         return notes
     }
 

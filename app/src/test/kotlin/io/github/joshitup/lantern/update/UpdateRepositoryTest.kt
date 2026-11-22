@@ -26,7 +26,7 @@ private fun rel(code: Int, notes: String = "notes $code") = ReleaseInfo(
     ReleaseVersion(code / 10000, code / 100 % 100, code % 100), "v$code", notes, "https://example.test/$code.apk", 1234L, "https://example.test/r/$code",
 )
 
-private class FakeSource(var latest: ReleaseInfo? = null, var fail: Boolean = false) : ReleaseSource {
+private class FakeSource(var latest: ReleaseInfo? = null, var fail: Boolean = false, var failTag: Boolean = false) : ReleaseSource {
     var latestCalls = 0
     val tags = mutableMapOf<String, ReleaseInfo>()
     override suspend fun latest(): ReleaseInfo? {
@@ -34,7 +34,10 @@ private class FakeSource(var latest: ReleaseInfo? = null, var fail: Boolean = fa
         if (fail) throw IOException("offline")
         return latest
     }
-    override suspend fun byTag(tag: String): ReleaseInfo? = tags[tag]
+    override suspend fun byTag(tag: String): ReleaseInfo? {
+        if (failTag) throw IOException("offline")
+        return tags[tag]
+    }
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -118,11 +121,51 @@ class UpdateRepositoryTest {
         assertNull(settings.updatePendingNotes.first())
     }
 
-    @Test fun whatsNew_offlineKeepsRetrying() = runTest {
+    @Test fun whatsNew_unknownTag_marksSeen() = runTest {
         val src = FakeSource(); repo(src, 10000).consumeWhatsNew()
         val r = repo(src, 10001)
         assertNull(r.consumeWhatsNew()) // no pending, tag unknown: nothing to show
         assertEquals(10001, settings.updateLastSeenCode.first())
+    }
+
+    @Test fun whatsNew_offlineKeepsRetrying() = runTest {
+        val src = FakeSource(failTag = true); src.tags["v1.0.1"] = rel(10001, "late notes")
+        repo(src, 10000).consumeWhatsNew()
+        val r = repo(src, 10001)
+        assertNull(r.consumeWhatsNew())
+        assertEquals(10000, settings.updateLastSeenCode.first())
+        src.failTag = false
+        assertEquals("late notes", r.consumeWhatsNew()?.notes)
+        assertEquals(10001, settings.updateLastSeenCode.first())
+    }
+
+    @Test fun available_survivesRestartWithinThrottle() = runTest {
+        val src = FakeSource(rel(10001))
+        repo(src).maybeCheck()
+        val r2 = repo(src)
+        r2.maybeCheck() // throttled, but seeds from storage
+        assertEquals(1, src.latestCalls)
+        assertEquals(10001, r2.available.value?.version?.code)
+        awaitStrip(true, r2)
+    }
+
+    @Test fun upToDateCheck_clearsAvailable() = runTest {
+        val src = FakeSource(rel(10001)); val r = repo(src)
+        r.checkNow(); assertNotNull(r.available.value)
+        src.latest = null; r.checkNow()
+        assertNull(r.available.value)
+        assertNull(settings.updateAvailable.first())
+        src.latest = rel(10001); r.checkNow(); src.latest = rel(10000); r.checkNow()
+        assertNull(r.available.value)
+    }
+
+    @Test fun installedCaughtUp_clearsAvailable() = runTest {
+        val src = FakeSource(rel(10001))
+        repo(src, 10000).checkNow()
+        val r2 = repo(src, 10001)
+        r2.maybeCheck() // throttled
+        assertNull(r2.available.value)
+        assertNull(settings.updateAvailable.first())
     }
 
     @Test fun freshInstall_noWhatsNew() = runTest {

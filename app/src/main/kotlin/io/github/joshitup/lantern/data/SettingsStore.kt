@@ -46,6 +46,17 @@ class SettingsStore(private val store: DataStore<Preferences>) {
     val updateLastSeenCode: Flow<Int?> = store.data.map { it[UPDATE_LAST_SEEN] }
     val updatePendingNotes: Flow<String?> = store.data.map { it[UPDATE_PENDING] }
 
+    val updateAvailable: Flow<String?> = store.data.map { it[UPDATE_AVAILABLE] }
+
+    suspend fun setUpdateAvailable(json: String?) {
+        store.edit { if (json == null) it.remove(UPDATE_AVAILABLE) else it[UPDATE_AVAILABLE] = json }
+    }
+
+    /** One edit, so a process death can't leave the notes both seen and still pending. */
+    suspend fun markWhatsNewSeen(code: Int) {
+        store.edit { it[UPDATE_LAST_SEEN] = code; it.remove(UPDATE_PENDING) }
+    }
+
     suspend fun setUpdateLastCheck(ms: Long) { store.edit { it[UPDATE_LAST_CHECK] = ms } }
     suspend fun setUpdateDismissedCode(code: Int) { store.edit { it[UPDATE_DISMISSED] = code } }
     suspend fun setUpdateLastSeenCode(code: Int) { store.edit { it[UPDATE_LAST_SEEN] = code } }
@@ -57,6 +68,7 @@ class SettingsStore(private val store: DataStore<Preferences>) {
         val UPDATE_LAST_CHECK = longPreferencesKey("update.lastCheck")
         val UPDATE_DISMISSED = intPreferencesKey("update.dismissedCode")
         val UPDATE_LAST_SEEN = intPreferencesKey("update.lastSeenCode")
+        val UPDATE_AVAILABLE = stringPreferencesKey("update.available")
         val UPDATE_PENDING = stringPreferencesKey("update.pendingNotes")
         const val MIN_SP = 14
         const val MAX_SP = 28
