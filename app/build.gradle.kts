@@ -10,7 +10,7 @@ plugins {
 }
 
 // Version: -Plantern.version=X.Y.Z, else the latest v* git tag, else 0.0.0-dev (versionCode 1).
-val (laternVersionName, laternVersionCode) = run {
+val (lanternVersionName, lanternVersionCode) = run {
     val versionRegex = Regex("""^(\d+)\.(\d+)\.(\d+)$""")
     fun codeOf(v: String): Int? {
         val m = versionRegex.matchEntire(v) ?: return null
@@ -81,8 +81,9 @@ val releaseKeystore: Map<String, String>? = run {
 if (releaseKeystore == null) {
     // Warn only when a release variant is actually in the task graph.
     gradle.taskGraph.whenReady {
-        if (allTasks.any { it.project == project && it.name.contains("Release") }) {
-            logger.warn("Lantern: release build signed with the DEBUG key — it cannot update a release install")
+        val releaseTask = Regex("^(assemble|bundle|package)Release$")
+        if (allTasks.any { it.project == project && releaseTask.matches(it.name) }) {
+            logger.warn("Lantern: release build signed with the DEBUG key \u2014 it cannot update a release install")
         }
     }
 }
@@ -99,13 +100,16 @@ android {
         applicationId = "io.github.joshitup.lantern"
         minSdk = 36
         targetSdk = 36
-        versionCode = laternVersionCode
-        versionName = laternVersionName
+        versionCode = lanternVersionCode
+        versionName = lanternVersionName
 
         // The GitHub repo the in-app update check reads releases from.
         buildConfigField("String", "UPDATE_REPO", "\"JoshItUp/lantern-for-ao3\"")
         // Lowercase hex SHA-256 of the release signing cert; empty means trust the installed app's own certificate.
         val certSha256 = providers.gradleProperty("lantern.certSha256").getOrElse("")
+        if (certSha256.isNotEmpty() && !Regex("^[0-9a-f]{64}$").matches(certSha256)) {
+            throw GradleException("Invalid -Plantern.certSha256: expected empty or 64 lowercase hex characters.")
+        }
         buildConfigField("String", "SIGNING_CERT_SHA256", "\"$certSha256\"")
     }
 

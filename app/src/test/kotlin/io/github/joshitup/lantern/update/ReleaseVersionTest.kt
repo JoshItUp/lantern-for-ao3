@@ -14,6 +14,12 @@ class ReleaseVersionTest {
     }
 
     @Test
+    fun parsesBoundaryTags() {
+        assertEquals(19999, ReleaseVersion.parseTag("v1.99.99")!!.code)
+        assertEquals(1, ReleaseVersion.parseTag("v0.0.1")!!.code)
+    }
+
+    @Test
     fun parsesTagWithoutPrefix() {
         assertEquals(ReleaseVersion(1, 0, 0), ReleaseVersion.parseTag("1.0.0"))
     }
