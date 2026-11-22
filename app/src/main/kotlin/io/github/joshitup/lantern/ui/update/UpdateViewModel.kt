@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -33,6 +34,7 @@ interface UpdateSource {
     fun confirmationLaunched()
     fun resetIfFailed()
     fun canInstall(): Boolean
+    fun cancelPermissionRequest()
 }
 
 fun AppContainer.updateSource(): UpdateSource {
@@ -48,6 +50,7 @@ fun AppContainer.updateSource(): UpdateSource {
         override fun confirmationLaunched() = c.updateController.confirmationLaunched()
         override fun resetIfFailed() = c.updateController.resetIfFailed()
         override fun canInstall() = c.updateInstaller.canInstall()
+        override fun cancelPermissionRequest() = c.updateController.cancelPermissionRequest()
     }
 }
 
@@ -91,17 +94,29 @@ class UpdateViewModel(private val source: UpdateSource, val versionName: String)
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UpdateUiState())
 
+    /** Only the strip's release: unlike [state], it doesn't change with download progress. */
+    val strip: StateFlow<ReleaseInfo?> = combine(source.available, source.showStrip) { rel, show -> rel.takeIf { show } }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     fun openSheet() = local.update { it.copy(sheetOpen = true) }
 
-    /** A failure is cleared on close, so reopening offers Download again. */
+    /** A failure or a pending permission ask is cleared on close, so reopening offers Download again. */
     fun closeSheet() {
         local.update { it.copy(sheetOpen = false) }
-        source.resetIfFailed()
+        clearStopped()
     }
 
     fun later() {
         local.update { it.copy(sheetOpen = false) }
+        clearStopped()
         viewModelScope.launch { source.dismiss() }
+    }
+
+    /** A declined permission ask must not auto-start on the next resume. */
+    private fun clearStopped() {
+        source.resetIfFailed()
+        source.cancelPermissionRequest()
     }
 
     /** Download, and Retry after a failure (the controller proceeds from Failed). */

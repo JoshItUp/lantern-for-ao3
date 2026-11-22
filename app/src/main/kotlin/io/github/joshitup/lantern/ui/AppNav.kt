@@ -59,7 +59,6 @@ import io.github.joshitup.lantern.ui.worklist.WorkListScreen
 import io.github.joshitup.lantern.ui.worklist.WorkListViewModel
 import io.github.joshitup.lantern.ao3.parse.Ao3Urls
 import io.github.joshitup.lantern.ui.update.UpdateSheet
-import io.github.joshitup.lantern.ui.update.UpdateUiState
 import io.github.joshitup.lantern.ui.update.UpdateViewModel
 import io.github.joshitup.lantern.ui.update.WhatsNewSheet
 import io.github.joshitup.lantern.update.UpdateState
@@ -70,7 +69,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import kotlinx.coroutines.delay
+import androidx.lifecycle.compose.currentStateAsState
 import kotlinx.coroutines.flow.MutableSharedFlow
 import okhttp3.HttpUrl
 
@@ -138,8 +137,8 @@ fun AppNav(container: AppContainer) {
     val libraryTab by remember { derivedStateOf { entry?.destination?.route == Routes.LIBRARY } }
     val searchReselect = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
     // Activity-scoped (outside the NavHost): the strip, the sheet, About and "What's new" share it.
+    // Nothing here reads its state: download progress must not recompose the NavHost.
     val updates: UpdateViewModel = viewModel(factory = UpdateViewModel.factory(container))
-    val updateState by updates.state.collectAsStateWithLifecycle()
 
     fun openAccount() = nav.navigate(Routes.ACCOUNT) { launchSingleTop = true }
 
@@ -196,6 +195,7 @@ fun AppNav(container: AppContainer) {
             composable(Routes.SEARCH) {
                 val vm: SearchViewModel = viewModel(factory = SearchViewModel.factory(container))
                 val needsSignIn by container.session.needsSignIn.collectAsStateWithLifecycle()
+                val updateStrip by updates.strip.collectAsStateWithLifecycle()
                 SearchScreen(
                     vm,
                     needsSignIn = needsSignIn,
@@ -204,7 +204,7 @@ fun AppNav(container: AppContainer) {
                     onAccount = ::openAccount,
                     onOpenWorkList = ::openWorkList,
                     onOpenWork = ::openWork,
-                    update = updateState.strip,
+                    update = updateStrip,
                     onUpdateOpen = updates::openSheet,
                     onUpdateDismiss = updates::later,
                 )
@@ -286,30 +286,27 @@ fun AppNav(container: AppContainer) {
         }
     }
 
-    UpdateHost(container, updates, updateState)
+    UpdateHost(container, updates)
 }
-
-/** How long a fresh confirmation waits before the UI launches it itself (the receiver's own launch pauses us first). */
-private const val CONFIRM_GRACE_MS = 700L
 
 /**
  * The update sheet, the launch "What's new" and the install hand-offs that need the activity: the
  * confirmation the receiver couldn't show, and the retry once "Install unknown apps" was granted.
  */
 @Composable
-private fun UpdateHost(container: AppContainer, updates: UpdateViewModel, state: UpdateUiState) {
+private fun UpdateHost(container: AppContainer, updates: UpdateViewModel) {
+    val state by updates.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val lifeState by lifecycle.currentStateFlow.collectAsStateWithLifecycle()
+    val lifeState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
     val resumed = lifeState.isAtLeast(Lifecycle.State.RESUMED)
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { updates.onResume() }
 
-    // On entering AwaitingConfirmation while resumed, and again on every resume while it lasts.
+    // The only launcher while the app is in the foreground (the receiver launches only in the background):
+    // on entering AwaitingConfirmation while resumed, and again on every resume while it lasts.
     val install = state.install
     LaunchedEffect(install, resumed) {
         if (!resumed || install !is UpdateState.AwaitingConfirmation) return@LaunchedEffect
-        delay(CONFIRM_GRACE_MS) // cancelled if the receiver's launch pauses us meanwhile
         try {
             context.startActivity(install.intent)
         } catch (e: RuntimeException) {

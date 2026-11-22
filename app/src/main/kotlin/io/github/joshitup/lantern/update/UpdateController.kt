@@ -41,6 +41,11 @@ class UpdateController(
         _state.update { if (it is UpdateState.Failed) UpdateState.Idle else it }
     }
 
+    /** The user declined the permission ask (Later, or closed the sheet): a later resume must not start the download. */
+    fun cancelPermissionRequest() {
+        _state.update { if (it is UpdateState.NeedsPermission) UpdateState.Idle else it }
+    }
+
     /** From [InstallResultReceiver]: the system refused the package or the user cancelled. */
     fun reportInstallFailure(message: String?) {
         disarmWatchdog()

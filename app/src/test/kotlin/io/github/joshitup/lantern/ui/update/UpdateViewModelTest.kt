@@ -53,6 +53,9 @@ class UpdateViewModelTest {
             if (install.value is UpdateState.Failed) install.value = UpdateState.Idle
         }
         override fun canInstall() = canInstall
+        override fun cancelPermissionRequest() {
+            if (install.value is UpdateState.NeedsPermission) install.value = UpdateState.Idle
+        }
     }
 
     private lateinit var src: FakeUpdates
@@ -162,6 +165,50 @@ class UpdateViewModelTest {
         vm.closeSheet()
         assertFalse(vm.state.value.sheetOpen)
         assertEquals(UpdateState.Idle, src.install.value)
+    }
+
+    @Test fun later_resetsFailed() = runTest(dispatcher) {
+        val vm = vm()
+        src.available.value = release
+        src.install.value = UpdateState.Failed("x")
+        vm.openSheet()
+        vm.later()
+        assertEquals(UpdateState.Idle, src.install.value)
+    }
+
+    @Test fun later_duringNeedsPermission_noAutoStartOnResume() = runTest(dispatcher) {
+        val vm = vm()
+        src.available.value = release
+        src.install.value = UpdateState.NeedsPermission
+        src.canInstall = false
+        vm.openSheet()
+        vm.later()
+        src.canInstall = true // granted anyway, outside the flow
+        vm.onResume()
+        assertTrue(src.started.isEmpty())
+        assertEquals(UpdateState.Idle, src.install.value)
+    }
+
+    @Test fun closeSheet_duringNeedsPermission_noAutoStartOnResume() = runTest(dispatcher) {
+        val vm = vm()
+        src.available.value = release
+        src.install.value = UpdateState.NeedsPermission
+        vm.openSheet()
+        vm.closeSheet()
+        vm.onResume()
+        assertTrue(src.started.isEmpty())
+    }
+
+    @Test fun stripFlow_narrow() = runTest(dispatcher) {
+        val vm = vm()
+        assertNull(vm.strip.value)
+        src.available.value = release
+        src.showStrip.value = true
+        assertEquals(release, vm.strip.value)
+        src.install.value = UpdateState.Downloading(0.5f)
+        assertEquals(release, vm.strip.value)
+        src.showStrip.value = false
+        assertNull(vm.strip.value)
     }
 
     @Test fun sizeInMb() {

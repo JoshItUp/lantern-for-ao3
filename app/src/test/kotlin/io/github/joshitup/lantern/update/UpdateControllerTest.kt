@@ -90,6 +90,20 @@ class UpdateControllerTest {
         assertEquals(0, downloads)
     }
 
+    @Test fun cancelPermissionRequest_returnsToIdle_onlyFromNeedsPermission() = runTest(UnconfinedTestDispatcher()) {
+        canInstall = false
+        val c = controller(this)
+        c.start(release)
+        c.cancelPermissionRequest()
+        assertEquals(UpdateState.Idle, c.state.value)
+        verifies = false
+        canInstall = true
+        c.start(release)
+        val failed = c.state.value
+        c.cancelPermissionRequest()
+        assertEquals(failed, c.state.value)
+    }
+
     @Test fun nonGithubUrl_notDownloaded() = runTest(UnconfinedTestDispatcher()) {
         for (url in listOf("http://github.com/a.apk", "https://example.com/a.apk", "https://github.com.evil.example/a.apk", "not a url")) {
             val c = controller(this)
