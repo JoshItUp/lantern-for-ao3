@@ -1,8 +1,14 @@
-# AO3 Reader
+<p align="center"><img src="docs-public/icon-512.png" alt="Lantern icon" width="128"></p>
 
-A personal, unofficial reader for [Archive of Our Own](https://archiveofourown.org) on Android, built for one phone (a Pixel 10, Android 16). It is not affiliated with AO3 or the OTW.
+# Lantern
 
-AO3 has no API, so the app reads AO3's public HTML pages and submits AO3's own forms. It does so politely:
+An unofficial Android reader for [Archive of Our Own](https://archiveofourown.org).
+
+> Unofficial; not affiliated with the OTW or AO3.
+
+Screenshots coming soon.
+
+AO3 has no API, so Lantern reads AO3's public HTML pages and submits AO3's own forms. It does so politely:
 
 - one request at a time, about 1 s apart, through a single fetcher;
 - `Retry-After` honoured on a 429, and never a retry loop;
@@ -16,6 +22,7 @@ AO3 has no API, so the app reads AO3's public HTML pages and submits AO3's own f
 - **Library**: History, Marked for Later, Bookmarks, Subscriptions (read live from AO3) and Downloads. Works you have read show a "Read" or "✓ Ch N" badge.
 - **Account actions** from the reader: kudos, bookmark (notes, tags, private, rec), mark for later, subscribe, and comment. Signed-in chapter reads are sent as visits, so they count in AO3 History.
 - **Downloads**: save a whole work from the reader's ⋯ menu or the chapter-end footer, then read it offline in the same reader. Downloads run in the background, survive sign-out, and are noticed when AO3 posts new chapters ("N new chapters · Update"). The Downloads tab works signed out.
+- **Updates**: in-app update checks against GitHub Releases, with a strip on Search and release notes in About.
 - **Authors and series**: tapping an author or series anywhere opens its works in the app, with Subscribe in the header.
 
 ## Architecture
@@ -34,23 +41,38 @@ Key points:
 - **Downloads** run in a WorkManager worker, one at a time, in the app process and through the same fetcher. The source is AO3's "Entire Work" page. A failed download is retried only when you tap Retry.
 - **The download store is format-neutral.** Each chapter is saved as the app's own serialized `ChapterContent` (`filesDir/downloads/{workId}/{index}.json`), and the source is pluggable (`DownloadSource`), so an EPUB source can become the default once AO3 restores EPUB downloads. A new copy is written to a temp directory and swapped in, so a failed update keeps the old copy.
 
-## Building and installing
+## Install
 
-Requirements: the Android SDK with platform 37.2 (`compileSdk`; min and target SDK are 36), and Android Studio's bundled JBR as the JDK (the code targets Java 21). From a shell, point `JAVA_HOME` at it, for example:
+1. Download the latest `lantern-X.Y.Z.apk` from the [Releases page](https://github.com/JoshItUp/lantern-for-ao3/releases).
+2. Allow your browser to install unknown apps when Android asks.
+3. Open the downloaded APK and install it.
+
+There is no Play Store build.
+
+## Updates
+
+Lantern checks GitHub for new releases. Update from the app: Account → About → Check for updates, or tap the update strip on Search. After the first update, later updates install without a prompt.
+
+## Privacy
+
+- Your AO3 credentials are encrypted on the device with an Android Keystore key and never leave it except to sign in to AO3.
+- No analytics and no tracking.
+- The update check contacts only GitHub; everything else goes to AO3.
+
+## Building
+
+Requirements: the Android SDK with platform 37.2 (`compileSdk`; min and target SDK are 36) and JDK 25, for example Android Studio's bundled JBR (the code targets Java 21):
 
 ```sh
 export JAVA_HOME="/c/Program Files/Android/Android Studio1/jbr"
-```
-
-Then:
-
-```sh
 ./gradlew :app:assembleDebug        # debug APK
 ./gradlew :app:installDebug         # build and install over adb
-./gradlew :app:installRelease       # minified release build (R8), installed over adb
+./gradlew :app:assembleRelease      # minified release build (R8)
 ```
 
-Connect the phone with USB debugging on (`adb devices` should list it). There is no Play Store build. The release build is signed with the local debug keystore, so a debug and a release build can be installed over each other without losing data.
+The version comes from `-Plantern.version=X.Y.Z`, else the latest `v*` git tag, else `0.0.0-dev`.
+
+Release signing reads `~/.lantern/keystore.properties` (keys `storeFile`, `storePassword`, `keyAlias`, `keyPassword`) or the `LANTERN_KEYSTORE_FILE`, `LANTERN_KEYSTORE_PASSWORD`, `LANTERN_KEY_ALIAS` and `LANTERN_KEY_PASSWORD` environment variables. Without either, release builds fall back to the debug key and cannot update a release install.
 
 The debug build adds a developer hook that fetches any AO3 path and saves the page for fixture work:
 
@@ -58,7 +80,13 @@ The debug build adds a developer hook that fetches any AO3 path and saves the pa
 adb shell am broadcast -a io.github.joshitup.lantern.DEBUG_FETCH -n io.github.joshitup.lantern/.DebugFetchReceiver --es path '/works/1'
 ```
 
-Add `--ez anon true` to fetch signed out. Pages land in the app's `files/debug-pages` (read them with `adb shell run-as io.github.joshitup.lantern`).
+Add `--ez anon true` to fetch signed out. Pages land in the app's `files/debug-pages`.
+
+## Releasing
+
+For the maintainer: on GitHub go to Actions → Release → Run workflow and choose patch, minor or major. The workflow tests, builds and signs the APK, verifies its certificate, moves `## [Unreleased]` in `CHANGELOG.md` to the new version and publishes the release as `lantern-X.Y.Z.apk`. Write the release notes by hand under `## [Unreleased]` before running it.
+
+The repository needs these Actions secrets (names only): `LANTERN_KEYSTORE_B64`, `LANTERN_KEYSTORE_PASSWORD`, `LANTERN_KEY_ALIAS`, `LANTERN_KEY_PASSWORD`, `LANTERN_CERT_SHA256`.
 
 ## Tests
 
