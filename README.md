@@ -84,7 +84,7 @@ Add `--ez anon true` to fetch signed out. Pages land in the app's `files/debug-p
 
 ## Releasing
 
-For the maintainer: on GitHub go to Actions → Release → Run workflow and choose patch, minor or major. The workflow tests, builds and signs the APK, verifies its certificate, moves `## [Unreleased]` in `CHANGELOG.md` to the new version and publishes the release as `lantern-X.Y.Z.apk`. Write the release notes by hand under `## [Unreleased]` before running it.
+For the maintainer: on GitHub go to Actions → Release → Run workflow and choose patch, minor or major. The workflow tests, builds and signs the APK, verifies its certificate, moves `## [Unreleased]` in `CHANGELOG.md` to the new version and publishes the release as `lantern-X.Y.Z.apk`. Notes written by hand under `## [Unreleased]` are optional: when that section is empty, the notes are generated from the commit subjects since the last tag.
 
 The repository needs these Actions secrets (names only): `LANTERN_KEYSTORE_B64`, `LANTERN_KEYSTORE_PASSWORD`, `LANTERN_KEY_ALIAS`, `LANTERN_KEY_PASSWORD`, `LANTERN_CERT_SHA256`.
 
@@ -98,7 +98,7 @@ The repository needs these Actions secrets (names only): `LANTERN_KEYSTORE_B64`,
 
 ## Note on AO3 History
 
-AO3 doesn't write History straight away. Visits are queued and copied in by an hourly background job, which can fall hours behind when AO3 is busy. A chapter you read signed in, online or from a download, can take a while to appear in History or update its visit count (see [#3](../../issues/3)).
+AO3 doesn't write History straight away. Visits are queued and copied in by an hourly background job, which can fall hours behind when AO3 is busy. So History can take up to a few hours to show chapters read in the app, signed in, online or from a download, or to update their visit counts.
 
 ## License
 
