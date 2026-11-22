@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -6,6 +7,84 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
     alias(libs.plugins.androidx.room)
+}
+
+// Version: -Plantern.version=X.Y.Z, else the latest v* git tag, else 0.0.0-dev (versionCode 1).
+val (laternVersionName, laternVersionCode) = run {
+    val versionRegex = Regex("""^(\d+)\.(\d+)\.(\d+)$""")
+    fun codeOf(v: String): Int? {
+        val m = versionRegex.matchEntire(v) ?: return null
+        val (major, minor, patch) = m.destructured
+        val mi = minor.toIntOrNull() ?: return null
+        val pa = patch.toIntOrNull() ?: return null
+        val ma = major.toIntOrNull() ?: return null
+        if (mi >= 100 || pa >= 100) return null
+        return ma * 10000 + mi * 100 + pa
+    }
+    val explicit = providers.gradleProperty("lantern.version").orNull
+    val fromGit = if (explicit == null) {
+        try {
+            val result = providers.exec {
+                commandLine("git", "describe", "--tags", "--abbrev=0", "--match", "v*")
+                workingDir = rootDir
+                isIgnoreExitValue = true
+            }
+            val out = result.standardOutput.asText.get().trim()
+            if (result.result.get().exitValue == 0 && out.isNotEmpty()) out.removePrefix("v") else null
+        } catch (e: Exception) {
+            null // git missing, or not a repository
+        }
+    } else null
+    val chosen = explicit ?: fromGit
+    if (chosen == null) {
+        "0.0.0-dev" to 1
+    } else {
+        val code = codeOf(chosen)
+        if (code == null) {
+            throw GradleException(
+                if (explicit != null) "Invalid -Plantern.version='$chosen': expected X.Y.Z with minor and patch below 100."
+                else "Latest git tag 'v$chosen' is not X.Y.Z with minor and patch below 100; fix the tag or pass -Plantern.version."
+            )
+        }
+        chosen to code
+    }
+}
+
+// Release signing: LANTERN_* env vars (CI), else keystore.properties, else the debug key.
+val signingEnvNames = listOf("LANTERN_KEYSTORE_FILE", "LANTERN_KEYSTORE_PASSWORD", "LANTERN_KEY_ALIAS", "LANTERN_KEY_PASSWORD")
+val releaseKeystore: Map<String, String>? = run {
+    if (providers.environmentVariable("LANTERN_KEYSTORE_FILE").isPresent) {
+        val missing = signingEnvNames.filter { !providers.environmentVariable(it).isPresent }
+        if (missing.isNotEmpty()) {
+            throw GradleException("LANTERN_KEYSTORE_FILE is set but these signing env vars are missing: ${missing.joinToString()}")
+        }
+        mapOf(
+            "storeFile" to providers.environmentVariable("LANTERN_KEYSTORE_FILE").get(),
+            "storePassword" to providers.environmentVariable("LANTERN_KEYSTORE_PASSWORD").get(),
+            "keyAlias" to providers.environmentVariable("LANTERN_KEY_ALIAS").get(),
+            "keyPassword" to providers.environmentVariable("LANTERN_KEY_PASSWORD").get(),
+        )
+    } else {
+        val propsPath = providers.gradleProperty("lantern.keystoreProps").orNull
+            ?: "${System.getProperty("user.home")}/.lantern/keystore.properties"
+        val propsFile = file(propsPath)
+        if (propsFile.isFile) {
+            val props = Properties().apply { propsFile.inputStream().use { load(it) } }
+            val keys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+            val missing = keys.filter { props.getProperty(it).isNullOrBlank() }
+            if (missing.isNotEmpty()) throw GradleException("$propsPath is missing keys: ${missing.joinToString()}")
+            keys.associateWith { props.getProperty(it) }
+        } else null
+    }
+}
+
+if (releaseKeystore == null) {
+    // Warn only when a release variant is actually in the task graph.
+    gradle.taskGraph.whenReady {
+        if (allTasks.any { it.project == project && it.name.contains("Release") }) {
+            logger.warn("Lantern: release build signed with the DEBUG key — it cannot update a release install")
+        }
+    }
 }
 
 android {
@@ -20,11 +99,25 @@ android {
         applicationId = "io.github.joshitup.lantern"
         minSdk = 36
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = laternVersionCode
+        versionName = laternVersionName
 
         // The GitHub repo the in-app update check reads releases from.
         buildConfigField("String", "UPDATE_REPO", "\"JoshItUp/lantern-for-ao3\"")
+        // Lowercase hex SHA-256 of the release signing cert; empty means trust the installed app's own certificate.
+        val certSha256 = providers.gradleProperty("lantern.certSha256").getOrElse("")
+        buildConfigField("String", "SIGNING_CERT_SHA256", "\"$certSha256\"")
+    }
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("lanternRelease") {
+                storeFile = file(releaseKeystore.getValue("storeFile"))
+                storePassword = releaseKeystore.getValue("storePassword")
+                keyAlias = releaseKeystore.getValue("keyAlias")
+                keyPassword = releaseKeystore.getValue("keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -32,8 +125,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Personal sideloaded app: sign with the local debug keystore (never committed).
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (releaseKeystore != null) "lanternRelease" else "debug")
         }
     }
 

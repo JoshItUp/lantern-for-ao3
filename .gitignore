@@ -11,3 +11,7 @@ captures/
 # Planning/agent working files (kept locally, not committed)
 docs/
 .superpowers/
+
+*.jks
+*.keystore
+keystore.properties
