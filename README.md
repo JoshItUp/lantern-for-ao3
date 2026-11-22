@@ -68,9 +68,9 @@ Add `--ez anon true` to fetch signed out. Pages land in the app's `files/debug-p
 
 `:ao3` has plain JUnit tests for the fetcher and every parser. `:app` runs JVM unit tests with Robolectric (Room migrations, repositories, the session, ViewModels, the download pipeline). The HTML fixtures are synthetic: they keep AO3's markup but carry made-up titles, names and ids. Never commit real AO3 data.
 
-## Known issue
+## Note on AO3 History
 
-- [#3](../../issues/3): chapters read from a download, online and signed in, aren't recorded in AO3 History, although plain online reads are.
+AO3 doesn't write History straight away. Visits are queued and copied in by an hourly background job, which can fall hours behind when AO3 is busy. A chapter you read signed in, online or from a download, can take a while to appear in History or update its visit count (see [#3](../../issues/3)).
 
 ## License
 
