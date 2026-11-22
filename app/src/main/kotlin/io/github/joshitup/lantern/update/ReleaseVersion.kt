@@ -1,6 +1,9 @@
 package io.github.joshitup.lantern.update
 
+import kotlinx.serialization.Serializable
+
 /** A release version `X.Y.Z`; the build derives versionCode with the same formula as [code]. */
+@Serializable
 data class ReleaseVersion(val major: Int, val minor: Int, val patch: Int) : Comparable<ReleaseVersion> {
     val code: Int get() = major * 10000 + minor * 100 + patch
 
