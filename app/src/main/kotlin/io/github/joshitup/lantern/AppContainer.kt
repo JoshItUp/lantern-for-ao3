@@ -43,7 +43,11 @@ import io.github.joshitup.lantern.net.PersistentCookieJar
 import io.github.joshitup.lantern.net.cachedUserAgent
 import io.github.joshitup.lantern.net.clearAo3SessionCookies
 import io.github.joshitup.lantern.net.WebViewChallengeSolver
+import io.github.joshitup.lantern.update.ApkVerifier
 import io.github.joshitup.lantern.update.UpdateClient
+import io.github.joshitup.lantern.update.UpdateController
+import io.github.joshitup.lantern.update.UpdateDownloader
+import io.github.joshitup.lantern.update.UpdateInstaller
 import io.github.joshitup.lantern.update.UpdateRepository
 import okhttp3.Cache
 import okhttp3.HttpUrl
@@ -190,6 +194,25 @@ class AppContainer(val context: Context) {
 
     val updateRepo: UpdateRepository by lazy {
         UpdateRepository(updateClient, settings, BuildConfig.VERSION_CODE, System::currentTimeMillis, appScope)
+    }
+
+    val updateInstaller: UpdateInstaller by lazy { UpdateInstaller(context) }
+
+    /** Download, verify and install, on [appScope]; [io.github.joshitup.lantern.update.InstallResultReceiver] reports install failures here. */
+    val updateController: UpdateController by lazy {
+        val downloader = UpdateDownloader(updateClient, File(context.cacheDir, "updates"))
+        UpdateController(
+            scope = appScope,
+            canInstall = updateInstaller::canInstall,
+            download = downloader::download,
+            verify = { apk ->
+                withContext(Dispatchers.IO) {
+                    ApkVerifier.check(context, apk, BuildConfig.VERSION_CODE.toLong(), BuildConfig.SIGNING_CERT_SHA256)
+                }
+            },
+            markPending = updateRepo::markPendingWhatsNew,
+            install = { apk -> withContext(Dispatchers.IO) { updateInstaller.install(apk) } },
+        )
     }
 
     init {
