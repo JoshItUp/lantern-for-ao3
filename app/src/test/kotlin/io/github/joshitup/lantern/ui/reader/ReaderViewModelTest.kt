@@ -34,6 +34,8 @@ import io.github.joshitup.lantern.data.db.DownloadJob
 import io.github.joshitup.lantern.data.db.ProgressDao
 import io.github.joshitup.lantern.data.db.SourceKind
 import io.github.joshitup.lantern.data.db.ProgressEntity
+import io.github.joshitup.lantern.data.db.LAYOUT_LEGACY
+import io.github.joshitup.lantern.data.db.LAYOUT_SPLIT
 import io.github.joshitup.lantern.ui.Routes
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -89,6 +91,73 @@ class ReaderViewModelTest {
 
     private fun saved(chapterId: Long?, number: Int, block: Int, offset: Int) =
         ProgressEntity(WORK, "Work", chapterId, number, 3, block, offset, 1L)
+
+    // ---- blank-line splitting ----
+    // Chapter 2 (titled, no summary): old items are title 0, "a/b/c" 1, "d" 2, footer 3; new: title, a, b, c, d(4), footer.
+    private fun splitBody() { source.body = listOf(Block.Text("a\n\nb\n\nc", emptyList()), Block.Text("d", emptyList())) }
+
+    @Test fun content_isSplit() = test {
+        splitBody()
+        progress.rows.value = listOf(saved(102, 2, 0, 0))
+        val vm = vm(); advanceUntilIdle()
+        assertEquals(listOf("a", "b", "c", "d"), vm.state.value.content!!.body.map { (it as Block.Text).text })
+    }
+
+    @Test fun legacyRow_mapped() = test {
+        splitBody()
+        progress.rows.value = listOf(saved(102, 2, 2, 20).copy(layout = LAYOUT_LEGACY))
+        val vm = vm(); advanceUntilIdle()
+        assertEquals(4 to 20, vm.state.value.restore)
+    }
+
+    @Test fun legacyRow_insideSplitBlock_handsTheScreenTheBlock() = test {
+        splitBody()
+        progress.rows.value = listOf(saved(102, 2, 1, 900).copy(layout = LAYOUT_LEGACY))
+        val vm = vm(); advanceUntilIdle()
+        val s = vm.state.value
+        assertEquals(1 to 0, s.restore)
+        val inBlock = s.restoreInBlock!!
+        assertEquals(1, inBlock.firstItem)
+        assertEquals(900, inBlock.offsetPx)
+        assertEquals(source.body!![0], inBlock.block)
+        vm.restoreApplied()
+        assertNull(vm.state.value.restoreInBlock)
+    }
+
+    @Test fun legacyRow_outsideSplitBlock_noInBlock() = test {
+        splitBody()
+        progress.rows.value = listOf(saved(102, 2, 2, 20).copy(layout = LAYOUT_LEGACY))
+        val vm = vm(); advanceUntilIdle()
+        assertNull(vm.state.value.restoreInBlock)
+    }
+
+    @Test fun splitRow_usedAsIs() = test {
+        splitBody()
+        progress.rows.value = listOf(saved(102, 2, 2, 20).copy(layout = LAYOUT_SPLIT))
+        val vm = vm(); advanceUntilIdle()
+        assertEquals(2 to 20, vm.state.value.restore)
+    }
+
+    @Test fun legacyRow_fallbackPath_mapped() = test {
+        splitBody()
+        source.listResult = Loaded.Error(FetchResult.Failed(null))
+        progress.rows.value = listOf(saved(102, 2, 2, 20).copy(layout = LAYOUT_LEGACY))
+        val vm = vm(); advanceUntilIdle()
+        assertFalse(vm.state.value.chapterListLoaded)
+        assertEquals(4 to 20, vm.state.value.restore)
+    }
+
+    @Test fun savedProgress_isSplitLayout() = test {
+        splitBody()
+        progress.rows.value = listOf(saved(102, 2, 2, 20).copy(layout = LAYOUT_LEGACY))
+        val vm = vm(); advanceUntilIdle()
+        vm.restoreApplied()
+        vm.onScroll(3, 5)
+        vm.flushProgress(); advanceUntilIdle()
+        val row = progress.upserts.last()
+        assertEquals(3, row.blockIndex)
+        assertEquals(LAYOUT_SPLIT, row.layout)
+    }
 
     @Test fun `opens at saved progress chapter with restore position`() = test {
         progress.rows.value = listOf(saved(102, 2, 7, 33))
@@ -966,6 +1035,8 @@ class ReaderViewModelTest {
         val prefetched = mutableListOf<ChapterRef>()
         /** When set, chapter() suspends until it completes (a slow network load). */
         var gate: CompletableDeferred<Unit>? = null
+        /** Body for every chapter (null: one "body N" block). */
+        var body: List<Block>? = null
 
         override suspend fun chapters(workId: Long) = listResult
 
@@ -977,7 +1048,7 @@ class ReaderViewModelTest {
             return Loaded.Ok(
                 ChapterContent(
                     workId, ChapterRef(ref.chapterId, number, "Chapter $number"), "Work $workId", listOf("A"),
-                    emptyList(), listOf(Block.Text("body $number", emptyList())), emptyList(), emptyList(),
+                    emptyList(), body ?: listOf(Block.Text("body $number", emptyList())), emptyList(), emptyList(),
                 )
             )
         }

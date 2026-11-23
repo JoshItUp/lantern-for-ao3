@@ -93,6 +93,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import androidx.compose.ui.text.rememberTextMeasurer
+import io.github.joshitup.lantern.ui.common.QUOTE_TEXT_INSET
+import kotlinx.coroutines.flow.first
 
 /** What one chapter pane shows; AnimatedContent keeps the outgoing pane's copy only while it slides out. */
 private data class Page(val index: Int, val content: ChapterContent?, val showSpinner: Boolean, val error: FetchResult?)
@@ -207,6 +210,7 @@ fun ReaderScreen(
                             isCurrent = isCurrent,
                             isLast = page.index == s.chapters.lastIndex,
                             restore = if (isCurrent) s.restore else null,
+                            restoreInBlock = if (isCurrent) s.restoreInBlock else null,
                             style = rememberReaderTextStyle(s.font, s.fontSizeSp),
                             onRestored = vm::restoreApplied,
                             onScroll = vm::onScroll,
@@ -349,6 +353,7 @@ private fun ChapterPane(
     isCurrent: Boolean,
     isLast: Boolean,
     restore: Pair<Int, Int>?,
+    restoreInBlock: InBlockRestore?,
     style: TextStyle,
     onRestored: () -> Unit,
     onScroll: (Int, Int) -> Unit,
@@ -367,7 +372,7 @@ private fun ChapterPane(
     }
     when {
         content != null -> Box(Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha.value }) {
-            ChapterText(content, isCurrent, isLast, restore, style, onRestored, onScroll, onNext, onOpenWorkList, footerActions, footerDownload, atLastStored)
+            ChapterText(content, isCurrent, isLast, restore, restoreInBlock, style, onRestored, onScroll, onNext, onOpenWorkList, footerActions, footerDownload, atLastStored)
         }
         page.error != null -> ErrorMessage(page.error, onRetry)
         // Empty background until the load has taken SPINNER_DELAY_MS, so cached swipes never flash a spinner.
@@ -383,6 +388,7 @@ private fun ChapterText(
     isCurrent: Boolean,
     isLast: Boolean,
     restore: Pair<Int, Int>?,
+    restoreInBlock: InBlockRestore?,
     style: TextStyle,
     onRestored: () -> Unit,
     onScroll: (Int, Int) -> Unit,
@@ -395,9 +401,22 @@ private fun ChapterText(
     val listState = rememberLazyListState()
     val report by rememberUpdatedState(if (isCurrent) onScroll else null)
 
+    val noteStyle = remember(style) { style.forNotes() }
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val linkColor = MaterialTheme.colorScheme.primary
     LaunchedEffect(restore) {
         if (restore != null) {
-            listState.scrollToItem(restore.first, restore.second)
+            // A place saved inside a paragraph that now splits: lay the old paragraph out at the list's width to find it.
+            val target = restoreInBlock?.let { b ->
+                val viewport = snapshotFlow { listState.layoutInfo.viewportSize.width }.first { it > 0 }
+                val itemWidth = viewport - with(density) { (READER_SIDE_PADDING * 2).roundToPx() }
+                measureInBlock(
+                    b, measurer, if (b.note) noteStyle else style, itemWidth, linkColor,
+                    quoteInsetPx = with(density) { QUOTE_TEXT_INSET.roundToPx() },
+                )
+            } ?: restore
+            listState.scrollToItem(target.first, target.second)
             onRestored()
         }
     }
@@ -411,16 +430,16 @@ private fun ChapterText(
 
     val text = MaterialTheme.colorScheme.onBackground
     val dim = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
-    val noteStyle = remember(style) { style.forNotes() }
     // Built once per chapter from the parsed links (a few objects; no parsing).
     val links = remember(content) { content.headerLinks() }
     // Stable padding: the bars come and go with the controls, the text must not jump.
     val bars = WindowInsets.systemBarsIgnoringVisibility.asPaddingValues()
     val padding = PaddingValues(
-        start = 20.dp, end = 20.dp,
+        start = READER_SIDE_PADDING, end = READER_SIDE_PADDING,
         top = bars.calculateTopPadding() + 16.dp, bottom = bars.calculateBottomPadding() + 24.dp,
     )
 
+    // Item order mirrored by legacyItems (ReaderLayout.kt) for places saved before blank-line splitting; change both together.
     LazyColumn(state = listState, contentPadding = padding, modifier = Modifier.fillMaxSize()) {
         if (content.ref.number == 1 || content.summary.isNotEmpty()) {
             workHeader(content, links, style, noteStyle, text, dim, onOpenWorkList)
@@ -570,3 +589,6 @@ private fun FlushOnStop(vm: ReaderViewModel) {
         }
     }
 }
+
+/** The reader list's side padding; a legacy restore measures text at the width it leaves. */
+private val READER_SIDE_PADDING = 20.dp

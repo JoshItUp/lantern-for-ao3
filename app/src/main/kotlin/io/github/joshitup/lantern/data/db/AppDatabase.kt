@@ -8,8 +8,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [PresetEntity::class, ProgressEntity::class, ReadMarkEntity::class, LibraryPageEntity::class, DownloadEntity::class, DownloadChapterEntity::class],
-    version = 4,
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 3, to = 4)],
+    version = 5,
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5)],
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {

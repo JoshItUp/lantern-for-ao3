@@ -92,10 +92,16 @@ fun BlockItem(block: Block, style: TextStyle, color: Color) {
         is Block.Quote -> {
             val text = remember(block, linkColor) { annotate(block.text, block.spans, linkColor) }
             Row(Modifier.height(IntrinsicSize.Min)) {
-                Spacer(Modifier.width(3.dp).fillMaxHeight().background(color.copy(alpha = 0.3f)))
-                Text(text, style = style, color = color.copy(alpha = 0.85f), modifier = Modifier.padding(start = 10.dp))
+                Spacer(Modifier.width(QUOTE_BAR).fillMaxHeight().background(color.copy(alpha = 0.3f)))
+                Text(text, style = style, color = color.copy(alpha = 0.85f), modifier = Modifier.padding(start = QUOTE_GAP))
             }
         }
         Block.Rule -> HorizontalDivider(Modifier.padding(vertical = 4.dp), color = color.copy(alpha = 0.2f))
     }
 }
+
+private val QUOTE_BAR = 3.dp
+private val QUOTE_GAP = 10.dp
+
+/** How far a quote's text sits in from the start of its item. */
+val QUOTE_TEXT_INSET = QUOTE_BAR + QUOTE_GAP
