@@ -60,6 +60,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import io.github.joshitup.lantern.ui.common.AppIcons
+import androidx.compose.ui.semantics.stateDescription
 
 /** A filter toggle's state: tapping cycles off → included → excluded → off. */
 enum class TriState { OFF, INCLUDED, EXCLUDED }
@@ -80,6 +81,12 @@ fun <T> cycle(v: T, included: Set<T>, excluded: Set<T>, singleInclude: Boolean =
         TriState.INCLUDED -> (included - v) to (excluded + v)
         TriState.EXCLUDED -> included to (excluded - v)
     }
+
+/** This list without [names] (ignoring case): a name added to an include list leaves its exclude list, and back. */
+fun List<String>.minusNames(names: List<String>): List<String> {
+    val drop = names.map { it.trim().lowercase() }.toSet()
+    return filter { it.trim().lowercase() !in drop }
+}
 
 /** Reset: every filter back to its default, keeping only the search bar's text. */
 fun resetFilters(q: SearchQuery): SearchQuery = SearchQuery(anyField = q.anyField)
@@ -133,16 +140,21 @@ fun FilterSheet(
                 Field("Creators", q.creators) { q = q.copy(creators = it) }
 
                 TagInput("Fandoms", "fandom", q.fandoms, autocomplete) { q = q.copy(fandoms = it) }
-                TagInput("Relationships", "relationship", q.relationships, autocomplete) { q = q.copy(relationships = it) }
-                TagInput("Exclude relationships", "relationship", q.excludedRelationships, autocomplete) {
-                    q = q.copy(excludedRelationships = it)
+                // A name is never both included and excluded: adding it to one list takes it out of the other.
+                TagInput("Relationships", "relationship", q.relationships, autocomplete) {
+                    q = q.copy(relationships = it, excludedRelationships = q.excludedRelationships.minusNames(it))
                 }
-                TagInput("Characters", "character", q.characters, autocomplete) { q = q.copy(characters = it) }
-                TagInput("Exclude characters", "character", q.excludedCharacters, autocomplete) {
-                    q = q.copy(excludedCharacters = it)
+                TagInput("Exclude relationships", "relationship", q.excludedRelationships, autocomplete, excluded = true) {
+                    q = q.copy(excludedRelationships = it, relationships = q.relationships.minusNames(it))
+                }
+                TagInput("Characters", "character", q.characters, autocomplete) {
+                    q = q.copy(characters = it, excludedCharacters = q.excludedCharacters.minusNames(it))
+                }
+                TagInput("Exclude characters", "character", q.excludedCharacters, autocomplete, excluded = true) {
+                    q = q.copy(excludedCharacters = it, characters = q.characters.minusNames(it))
                 }
                 TagInput("Additional tags", "freeform", q.freeforms, autocomplete) { q = q.copy(freeforms = it) }
-                TagInput("Exclude other tags", "tag", q.excludedTags, autocomplete) { q = q.copy(excludedTags = it) }
+                TagInput("Exclude other tags", "tag", q.excludedTags, autocomplete, excluded = true) { q = q.copy(excludedTags = it) }
 
                 Section("Rating") {
                     Rating.entries.forEach { r ->
@@ -241,7 +253,7 @@ private fun Section(title: String, content: @Composable () -> Unit) {
 
 /**
  * A filter toggle with three states: off, included (the usual selected look) and excluded (a muted red with a
- * minus sign, announced as excluded so it isn't told apart by colour alone).
+ * minus sign); TalkBack reads the state as one word, so it isn't told apart by colour alone.
  */
 @Composable
 internal fun TriStateChip(label: String, state: TriState, onClick: () -> Unit) {
@@ -265,7 +277,14 @@ internal fun TriStateChip(label: String, state: TriState, onClick: () -> Unit) {
             null
         },
         colors = colors,
-        modifier = if (excluded) Modifier.semantics { contentDescription = "$label, excluded" } else Modifier,
+        // One spoken state instead of "selected" (an excluded chip is selected only for its look).
+        modifier = Modifier.semantics {
+            stateDescription = when (state) {
+                TriState.INCLUDED -> "Included"
+                TriState.EXCLUDED -> "Excluded"
+                TriState.OFF -> "Not selected"
+            }
+        },
     )
 }
 
@@ -313,6 +332,7 @@ private fun TagInput(
     kind: String,
     values: List<String>,
     autocomplete: (String, String) -> Flow<List<String>>,
+    excluded: Boolean = false,
     onChange: (List<String>) -> Unit,
 ) {
     var text by rememberSaveable(kind) { mutableStateOf("") }
@@ -330,21 +350,7 @@ private fun TagInput(
         suggestions = emptyList()
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (values.isNotEmpty()) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                values.forEach { v ->
-                    Text(
-                        "$v  ✕",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier
-                            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(8.dp))
-                            .clickable { onChange(values - v) }
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                    )
-                }
-            }
-        }
+        if (values.isNotEmpty()) TagChips(values, excluded) { v -> onChange(values - v) }
         OutlinedTextField(
             value = text, onValueChange = { text = it }, label = { Text(label) }, singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -376,6 +382,30 @@ private fun TagInput(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * A field's names, each tapped to remove. Names in an Exclude field share the excluded toggles' look (muted red,
+ * a leading minus) and are read as excluded, so they're never mistaken for included ones.
+ */
+@Composable
+internal fun TagChips(values: List<String>, excluded: Boolean, onRemove: (String) -> Unit) {
+    val container = if (excluded) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+    val content = if (excluded) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        values.forEach { v ->
+            Text(
+                if (excluded) "−  $v  ✕" else "$v  ✕",
+                fontSize = 13.sp,
+                color = content,
+                modifier = Modifier
+                    .background(container, RoundedCornerShape(8.dp))
+                    .clickable { onRemove(v) }
+                    .semantics { contentDescription = if (excluded) "$v, excluded. Remove" else "$v. Remove" }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            )
         }
     }
 }

@@ -106,4 +106,10 @@ class SearchUiHelpersTest {
         assertEquals("reader/7?number=1", Routes.reader(7, null, 1))
         assertEquals("reader/7?number=3&chapterId=99", Routes.reader(7, 99, 3))
     }
+
+    @Test fun addingAName_removesItFromTheOppositeList() {
+        assertEquals(listOf("c"), listOf("A/B", "c").minusNames(listOf("a/b", "D")))
+        assertEquals(listOf("X"), listOf("A/B", "X").minusNames(listOf("a/b")))
+        assertEquals(listOf("A/B"), listOf("A/B").minusNames(emptyList()))
+    }
 }
