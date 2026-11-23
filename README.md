@@ -105,3 +105,13 @@ AO3 doesn't write History straight away. Visits are queued and copied in by an h
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Credits
+
+The reader bundles these fonts, each under the [SIL Open Font License 1.1](https://openfontlicense.org). Their licence texts ship in the app and live in [app/src/main/assets/licenses](app/src/main/assets/licenses).
+
+- [Literata](https://github.com/googlefonts/literata), by the Literata Project Authors
+- [Inter](https://github.com/rsms/inter), by the Inter Project Authors
+- [Atkinson Hyperlegible Next](https://github.com/googlefonts/atkinson-hyperlegible-next), by the Atkinson Hyperlegible Next Project Authors
+- [OpenDyslexic](https://github.com/antijingoist/opendyslexic), by Abbie Gonzalez
+- [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), by the JetBrains Mono Project Authors

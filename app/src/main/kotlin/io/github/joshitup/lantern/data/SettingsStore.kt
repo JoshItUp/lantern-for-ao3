@@ -12,7 +12,8 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-enum class ReaderFont { SYSTEM, SERIF, SANS, MONO }
+/** Picker order. Stored by name: keep existing names. */
+enum class ReaderFont { SYSTEM, SERIF, SANS, ATKINSON, DYSLEXIC, MONO }
 
 private val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 

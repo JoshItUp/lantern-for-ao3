@@ -138,6 +138,11 @@ private fun About(updates: UpdateViewModel) {
         TextButton(onClick = { uri.openUri("$REPO_URL/releases") }) { Text("Release notes") }
         TextButton(onClick = { uri.openUri(REPO_URL) }) { Text("Source code") }
     }
+    Text(
+        "Fonts: Literata, Inter, Atkinson Hyperlegible Next, OpenDyslexic and JetBrains Mono, under the SIL Open Font License.",
+        style = MaterialTheme.typography.bodySmall,
+        color = muted,
+    )
     Text("License: MIT", style = MaterialTheme.typography.bodySmall, color = muted)
 }
 
