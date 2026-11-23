@@ -67,6 +67,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import io.github.joshitup.lantern.ui.common.rememberListSides
+import io.github.joshitup.lantern.ui.common.heightForLabel
 
 /** Items from the end of the list at which the next page is requested (as in Search). */
 private const val PREFETCH_DISTANCE = 5
@@ -194,7 +195,8 @@ private fun Tabs(selected: Int, onTap: (Int) -> Unit) {
                 onClick = { onTap(i) },
                 selectedContentColor = MaterialTheme.colorScheme.onBackground,
                 unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.height(44.dp),
+                // Grows with the label at large font sizes.
+                modifier = Modifier.height(heightForLabel(44.dp, MaterialTheme.typography.labelLarge)),
                 text = {
                     Text(
                         tab.label(),

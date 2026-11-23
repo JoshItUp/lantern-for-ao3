@@ -101,6 +101,8 @@ import io.github.joshitup.lantern.ui.common.READER_MAX_WIDTH
 import io.github.joshitup.lantern.ui.common.sideInsetsPx
 import io.github.joshitup.lantern.ui.common.readerContentWidthPx
 import io.github.joshitup.lantern.ui.common.rememberSidePadding
+import io.github.joshitup.lantern.ui.common.heightForLabel
+import androidx.compose.ui.unit.Dp
 
 /** What one chapter pane shows; AnimatedContent keeps the outgoing pane's copy only while it slides out. */
 private data class Page(val index: Int, val content: ChapterContent?, val showSpinner: Boolean, val error: FetchResult?)
@@ -260,7 +262,7 @@ fun ReaderScreen(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility)
-                    .padding(bottom = if (s.controlsVisible) BOTTOM_BAR_HEIGHT else 0.dp),
+                    .padding(bottom = if (s.controlsVisible) readerBarHeight() else 0.dp),
             )
         }
     }
@@ -534,7 +536,7 @@ private fun ChapterFooter(
 private fun ReaderBottomBar(actions: @Composable () -> Unit) {
     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), modifier = Modifier.fillMaxWidth()) {
         Box(
-            Modifier.windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility).height(BOTTOM_BAR_HEIGHT),
+            Modifier.windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility).height(readerBarHeight()),
             contentAlignment = Alignment.Center,
         ) { actions() }
     }
@@ -598,3 +600,7 @@ private fun FlushOnStop(vm: ReaderViewModel) {
     }
 }
 
+
+/** The action row's height: grows with its one text button's label at large font sizes (icons don't scale). */
+@Composable
+private fun readerBarHeight(): Dp = heightForLabel(BOTTOM_BAR_HEIGHT, MaterialTheme.typography.labelLarge)
