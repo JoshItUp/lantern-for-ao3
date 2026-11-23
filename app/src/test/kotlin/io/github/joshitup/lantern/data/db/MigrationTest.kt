@@ -56,4 +56,13 @@ class MigrationTest {
         db.query("SELECT seenAt FROM ReadMarkEntity WHERE workId = 7").use { it.moveToFirst(); assertEquals(55L, it.getLong(0)) }
         db.close()
     }
+
+    @Test fun `4 to 5 marks existing progress as the legacy layout`() {
+        seed(4)
+        val db = helper.runMigrationsAndValidate(name, 5, true)
+        db.query("SELECT layout, workTitle FROM ProgressEntity WHERE workId = 7").use {
+            it.moveToFirst(); assertEquals(1, it.getInt(0)); assertEquals("T", it.getString(1))
+        }
+        db.close()
+    }
 }
