@@ -421,6 +421,7 @@ private fun ChapterText(
         top = bars.calculateTopPadding() + 16.dp, bottom = bars.calculateBottomPadding() + 24.dp,
     )
 
+    // Item order mirrored by legacyItemCounts (ReaderLayout.kt) for places saved before blank-line splitting; change both together.
     LazyColumn(state = listState, contentPadding = padding, modifier = Modifier.fillMaxSize()) {
         if (content.ref.number == 1 || content.summary.isNotEmpty()) {
             workHeader(content, links, style, noteStyle, text, dim, onOpenWorkList)
