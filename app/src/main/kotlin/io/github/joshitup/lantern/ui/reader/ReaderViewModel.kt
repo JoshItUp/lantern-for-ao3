@@ -34,6 +34,8 @@ import io.github.joshitup.lantern.data.ReaderFont
 import io.github.joshitup.lantern.data.SettingsStore
 import io.github.joshitup.lantern.data.db.DownloadEntity
 import io.github.joshitup.lantern.data.db.ProgressDao
+import io.github.joshitup.lantern.data.db.LAYOUT_LEGACY
+import io.github.joshitup.lantern.data.db.LAYOUT_SPLIT
 import io.github.joshitup.lantern.data.db.ProgressEntity
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
@@ -286,8 +288,8 @@ class ReaderViewModel(
                 val loadedRef = r.value.ref
                 rememberChapter(loadedRef)
                 _state.update {
-                    it.copy(chapters = listOf(loadedRef), index = 0, chapterListLoaded = false, content = r.value,
-                        loading = false, error = null, restore = restoreFor(loadedRef))
+                    it.copy(chapters = listOf(loadedRef), index = 0, chapterListLoaded = false, content = r.value.splitForReader(),
+                        loading = false, error = null, restore = restoreFor(loadedRef, r.value))
                 }
             }
             is Loaded.Error -> _state.update { it.copy(loading = false, error = r.result) }
@@ -299,7 +301,7 @@ class ReaderViewModel(
             is Loaded.Ok -> {
                 rememberChapter(ref)
                 _state.update {
-                    it.copy(content = r.value, loading = false, error = null, restore = restoreFor(ref))
+                    it.copy(content = r.value.splitForReader(), loading = false, error = null, restore = restoreFor(ref, r.value))
                 }
                 _state.value.chapters.getOrNull(index + 1)?.let { source.prefetch(workId, it) }
             }
@@ -307,8 +309,11 @@ class ReaderViewModel(
         }
     }
 
-    private fun restoreFor(ref: ChapterRef): Pair<Int, Int>? =
-        saved?.takeIf { ref.matches(it.chapterId, it.chapterNumber) }?.let { it.blockIndex to it.blockOffsetPx }
+    /** The saved place in [ref], in the split layout; [original] is the chapter as loaded (unsplit). */
+    private fun restoreFor(ref: ChapterRef, original: ChapterContent): Pair<Int, Int>? =
+        saved?.takeIf { ref.matches(it.chapterId, it.chapterNumber) }?.let {
+            if (it.layout == LAYOUT_LEGACY) legacyRestore(original, it.blockIndex, it.blockOffsetPx) else it.blockIndex to it.blockOffsetPx
+        }
 
     fun goTo(index: Int) {
         val s = _state.value
@@ -408,6 +413,7 @@ class ReaderViewModel(
             blockIndex = scrollBlock,
             blockOffsetPx = scrollOffset,
             updatedAt = 0L,
+            layout = LAYOUT_SPLIT,
         )
     }
 

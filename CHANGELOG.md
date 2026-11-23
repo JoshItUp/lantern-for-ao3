@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Chapters written as one long paragraph with blank lines are now laid out paragraph by paragraph, like every other chapter. Your place in a chapter is kept.
+
 ### Fixed
 - TalkBack now reads a work card's authors and series along with the card, not only when each link is focused.
 - Signing out while a sign-in is still finishing no longer leaves you signed in to AO3 behind the scenes.
