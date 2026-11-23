@@ -44,6 +44,7 @@ import io.github.joshitup.lantern.ui.common.Hint
 import io.github.joshitup.lantern.ui.search.WorkCard
 import io.github.joshitup.lantern.ui.search.badgeText
 import io.github.joshitup.lantern.ui.theme.WarningColor
+import io.github.joshitup.lantern.ui.common.rememberListSides
 
 private val RowShape = RoundedCornerShape(16.dp)
 private val ChipShape = RoundedCornerShape(6.dp)
@@ -75,10 +76,11 @@ fun DownloadsTab(
     onCancelDelete: () -> Unit,
 ) {
     val bottomInset = WindowInsets.navigationBarsIgnoringVisibility.asPaddingValues().calculateBottomPadding()
+    val sides = rememberListSides()
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 0.dp, bottom = bottomInset + bottomBarHeight + 24.dp),
+        contentPadding = PaddingValues(start = sides.start, end = sides.end, top = 0.dp, bottom = bottomInset + bottomBarHeight + 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         // Always first (anchors the top, as in the other tabs); holds the total once anything is stored.

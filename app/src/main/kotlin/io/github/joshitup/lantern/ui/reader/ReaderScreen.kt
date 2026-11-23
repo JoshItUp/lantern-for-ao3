@@ -96,6 +96,14 @@ import kotlin.math.roundToInt
 import androidx.compose.ui.text.rememberTextMeasurer
 import io.github.joshitup.lantern.ui.common.QUOTE_TEXT_INSET
 import kotlinx.coroutines.flow.first
+import io.github.joshitup.lantern.ui.common.READER_BASE_PADDING
+import io.github.joshitup.lantern.ui.common.READER_MAX_WIDTH
+import io.github.joshitup.lantern.ui.common.sideInsetsPx
+import io.github.joshitup.lantern.ui.common.readerContentWidthPx
+import io.github.joshitup.lantern.ui.common.rememberSidePadding
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.layout.onSizeChanged
 
 /** What one chapter pane shows; AnimatedContent keeps the outgoing pane's copy only while it slides out. */
 private data class Page(val index: Int, val content: ChapterContent?, val showSpinner: Boolean, val error: FetchResult?)
@@ -142,6 +150,8 @@ fun ReaderScreen(
     val lastStored = s.download?.takeIf { it.hasCopy }?.chaptersStored?.minus(1) ?: -1
 
     val bars = ImmersiveMode(hidden = !s.controlsVisible)
+    // The action bar's real height (taller when large text wraps its label); the snackbar sits above it.
+    var barHeight by remember { mutableStateOf(BOTTOM_BAR_HEIGHT) }
     FlushOnStop(vm)
     // One handler: an open chapter drawer closes first; otherwise restore the bars, then leave.
     BackHandler {
@@ -246,7 +256,7 @@ fun ReaderScreen(
                 exit = fadeOut() + slideOutVertically { it },
                 modifier = Modifier.align(Alignment.BottomCenter),
             ) {
-                ReaderBottomBar(actions = footerActions)
+                ReaderBottomBar(onHeight = { barHeight = it }, actions = footerActions)
             }
 
             // Above the bottom bar while it shows; the inset ignores visibility so nothing jumps.
@@ -255,7 +265,7 @@ fun ReaderScreen(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility)
-                    .padding(bottom = if (s.controlsVisible) BOTTOM_BAR_HEIGHT else 0.dp),
+                    .padding(bottom = if (s.controlsVisible) barHeight else 0.dp),
             )
         }
     }
@@ -402,6 +412,8 @@ private fun ChapterText(
     val report by rememberUpdatedState(if (isCurrent) onScroll else null)
 
     val noteStyle = remember(style) { style.forNotes() }
+    // Read inside the restore effect when it runs: insets can arrive after the first composition.
+    val cutout by rememberUpdatedState(sideInsetsPx())
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val linkColor = MaterialTheme.colorScheme.primary
@@ -410,7 +422,7 @@ private fun ChapterText(
             // A place saved inside a paragraph that now splits: lay the old paragraph out at the list's width to find it.
             val target = restoreInBlock?.let { b ->
                 val viewport = snapshotFlow { listState.layoutInfo.viewportSize.width }.first { it > 0 }
-                val itemWidth = viewport - with(density) { (READER_SIDE_PADDING * 2).roundToPx() }
+                val itemWidth = readerContentWidthPx(viewport, density.density, cutout.first, cutout.second)
                 measureInBlock(
                     b, measurer, if (b.note) noteStyle else style, itemWidth, linkColor,
                     quoteInsetPx = with(density) { QUOTE_TEXT_INSET.roundToPx() },
@@ -434,8 +446,10 @@ private fun ChapterText(
     val links = remember(content) { content.headerLinks() }
     // Stable padding: the bars come and go with the controls, the text must not jump.
     val bars = WindowInsets.systemBarsIgnoringVisibility.asPaddingValues()
+    // Centred and capped on wide screens, clear of a side camera cutout in landscape.
+    val sides = rememberSidePadding(READER_MAX_WIDTH, READER_BASE_PADDING)
     val padding = PaddingValues(
-        start = READER_SIDE_PADDING, end = READER_SIDE_PADDING,
+        start = sides.start, end = sides.end,
         top = bars.calculateTopPadding() + 16.dp, bottom = bars.calculateBottomPadding() + 24.dp,
     )
 
@@ -523,10 +537,15 @@ private fun ChapterFooter(
 /** The controls' bottom bar: the action row on the same translucent surface as the top bar. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ReaderBottomBar(actions: @Composable () -> Unit) {
+internal fun ReaderBottomBar(onHeight: (Dp) -> Unit = {}, actions: @Composable () -> Unit) {
+    val density = LocalDensity.current
     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), modifier = Modifier.fillMaxWidth()) {
+        // At least the usual height; taller when large text wraps the sign-in button (reported for the snackbar).
         Box(
-            Modifier.windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility).height(BOTTOM_BAR_HEIGHT),
+            Modifier
+                .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility)
+                .heightIn(min = BOTTOM_BAR_HEIGHT)
+                .onSizeChanged { onHeight(with(density) { it.height.toDp() }) },
             contentAlignment = Alignment.Center,
         ) { actions() }
     }
@@ -590,5 +609,3 @@ private fun FlushOnStop(vm: ReaderViewModel) {
     }
 }
 
-/** The reader list's side padding; a legacy restore measures text at the width it leaves. */
-private val READER_SIDE_PADDING = 20.dp

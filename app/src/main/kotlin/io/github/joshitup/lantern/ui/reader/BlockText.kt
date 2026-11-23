@@ -20,14 +20,26 @@ private fun variable(res: Int, style: FontStyle = FontStyle.Normal): List<Font> 
     Font(res, weight = w, style = style, variationSettings = FontVariation.Settings(FontVariation.weight(w.weight)))
 }
 
+/** A static font's files: Normal and Medium use [regular], SemiBold and Bold use [bold]. */
+private fun static(regular: Int, bold: Int, style: FontStyle): List<Font> = WEIGHTS.map { w ->
+    Font(if (w < FontWeight.SemiBold) regular else bold, weight = w, style = style)
+}
+
 private val Literata = FontFamily(variable(R.font.literata) + variable(R.font.literata_italic, FontStyle.Italic))
-private val Inter = FontFamily(variable(R.font.inter))
-private val JetBrainsMono = FontFamily(variable(R.font.jetbrains_mono))
+private val Inter = FontFamily(variable(R.font.inter) + variable(R.font.inter_italic, FontStyle.Italic))
+private val Atkinson = FontFamily(variable(R.font.atkinson) + variable(R.font.atkinson_italic, FontStyle.Italic))
+private val OpenDyslexic = FontFamily(
+    static(R.font.opendyslexic_regular, R.font.opendyslexic_bold, FontStyle.Normal) +
+        static(R.font.opendyslexic_italic, R.font.opendyslexic_bold_italic, FontStyle.Italic),
+)
+private val JetBrainsMono = FontFamily(variable(R.font.jetbrains_mono) + variable(R.font.jetbrains_mono_italic, FontStyle.Italic))
 
 fun ReaderFont.family(): FontFamily = when (this) {
     ReaderFont.SYSTEM -> FontFamily.Default
     ReaderFont.SERIF -> Literata
     ReaderFont.SANS -> Inter
+    ReaderFont.ATKINSON -> Atkinson
+    ReaderFont.DYSLEXIC -> OpenDyslexic
     ReaderFont.MONO -> JetBrainsMono
 }
 
@@ -35,6 +47,8 @@ fun ReaderFont.label(): String = when (this) {
     ReaderFont.SYSTEM -> "System"
     ReaderFont.SERIF -> "Literata"
     ReaderFont.SANS -> "Inter"
+    ReaderFont.ATKINSON -> "Atkinson"
+    ReaderFont.DYSLEXIC -> "OpenDyslexic"
     ReaderFont.MONO -> "Mono"
 }
 

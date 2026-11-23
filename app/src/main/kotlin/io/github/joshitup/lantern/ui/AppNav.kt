@@ -62,6 +62,13 @@ import io.github.joshitup.lantern.ui.update.UpdateHost
 import io.github.joshitup.lantern.ui.update.UpdateViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import okhttp3.HttpUrl
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import io.github.joshitup.lantern.ui.common.heightForLabel
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
 object Routes {
     const val SEARCH = "search"
@@ -124,6 +131,8 @@ fun AppNav(container: AppContainer) {
     val entry by nav.currentBackStackEntryAsState()
     // Derived: the bar recomposes only when tab-ness or the selected tab actually changes.
     val showBar by remember { derivedStateOf { entry?.destination?.route.let { it == null || it in Routes.TABS } } }
+    // The bottom bar's real height (taller at large font sizes); the tabs pad their lists by it.
+    var barHeight by remember { mutableStateOf(BottomBarHeight) }
     val libraryTab by remember { derivedStateOf { entry?.destination?.route == Routes.LIBRARY } }
     val searchReselect = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
     // Activity-scoped (outside the NavHost): the strip, the sheet, About and "What's new" share it.
@@ -145,7 +154,7 @@ fun AppNav(container: AppContainer) {
     fun openWork(workId: Long, chapterId: Long?, number: Int) =
         nav.navigate(Routes.reader(workId, chapterId, number)) { launchSingleTop = true }
 
-    // The bar overlays the NavHost, so hiding it never relayouts a screen (tabs pad by BottomBarHeight).
+    // The bar overlays the NavHost, so hiding it never relayouts a screen (tabs pad by its measured height).
     Box(Modifier.fillMaxSize()) {
         NavHost(
             navController = nav,
@@ -189,7 +198,7 @@ fun AppNav(container: AppContainer) {
                 SearchScreen(
                     vm,
                     needsSignIn = needsSignIn,
-                    bottomBarHeight = BottomBarHeight,
+                    bottomBarHeight = barHeight,
                     reselect = searchReselect,
                     onAccount = ::openAccount,
                     onOpenWorkList = ::openWorkList,
@@ -207,7 +216,7 @@ fun AppNav(container: AppContainer) {
                     vm,
                     downloadsVm,
                     askNotifications = askNotifications,
-                    bottomBarHeight = BottomBarHeight,
+                    bottomBarHeight = barHeight,
                     onAccount = ::openAccount,
                     onOpenWork = ::openWork,
                     onOpenWorkList = ::openWorkList,
@@ -272,6 +281,7 @@ fun AppNav(container: AppContainer) {
                 libraryTab = libraryTab,
                 onSearch = { if (libraryTab) nav.switchTab(Routes.SEARCH) else searchReselect.tryEmit(Unit) },
                 onLibrary = { if (!libraryTab) nav.switchTab(Routes.LIBRARY) },
+                onHeight = { barHeight = it },
             )
         }
     }
@@ -288,7 +298,8 @@ private fun NavHostController.switchTab(route: String) = navigate(route) {
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-private fun BottomBar(libraryTab: Boolean, onSearch: () -> Unit, onLibrary: () -> Unit) {
+internal fun BottomBar(libraryTab: Boolean, onSearch: () -> Unit, onLibrary: () -> Unit, onHeight: (Dp) -> Unit = {}) {
+    val density = LocalDensity.current
     val color = NavigationBarDefaults.containerColor
     // The inset ignores visibility, so the bar never jumps while the reader's system bars come back.
     Box(
@@ -298,7 +309,10 @@ private fun BottomBar(libraryTab: Boolean, onSearch: () -> Unit, onLibrary: () -
             .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility),
     ) {
         NavigationBar(
-            modifier = Modifier.height(BottomBarHeight),
+            // The usual height, grown with the label at large font sizes; the tabs pad by what it really is.
+            modifier = Modifier
+                .height(heightForLabel(BottomBarHeight, MaterialTheme.typography.labelMedium))
+                .onSizeChanged { onHeight(with(density) { it.height.toDp() }) },
             containerColor = color,
             windowInsets = WindowInsets(0),
         ) {

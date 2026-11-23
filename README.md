@@ -17,7 +17,7 @@ AO3 has no API, so Lantern reads AO3's public HTML pages and submits AO3's own f
 ## Features
 
 - **Search**: AO3's full work search (any field, title, creator; fandoms, characters, relationships, additional tags and tags to exclude, with AO3's autocomplete; rating, warnings, categories; completion, crossover, word count, language, updated date; sort). Filters save as named presets shown as chips; a long-press renames, updates, reorders or deletes one. Result cards show every tag and the full summary, paged 20 at a time. A Continue strip reopens the last work read.
-- **Reader**: native Compose text, one chapter per scroll; swipe between chapters; a chapter list; resume at the exact chapter and position; immersive mode (tap the centre to show or hide the controls); font size and font family (system, serif, sans, mono). The next chapter is prefetched to a disk cache, and only the current chapter is held in memory.
+- **Reader**: native Compose text, one chapter per scroll; swipe between chapters; a chapter list; resume at the exact chapter and position; immersive mode (tap the centre to show or hide the controls); font size and font family (the phone's own font, or bundled Literata, Inter, Atkinson Hyperlegible Next, OpenDyslexic and JetBrains Mono). The next chapter is prefetched to a disk cache, and only the current chapter is held in memory.
 - **Sign-in**: AO3 username or email and password. The credentials are encrypted with an Android Keystore key, so the app signs in again silently when the session expires. Search and reading work signed out.
 - **Library**: History, Marked for Later, Bookmarks, Subscriptions (read live from AO3) and Downloads. Works you have read show a "Read" or "✓ Ch N" badge.
 - **Account actions** from the reader: kudos, bookmark (notes, tags, private, rec), mark for later, subscribe, and comment. Signed-in chapter reads are sent as visits, so they count in AO3 History.
@@ -105,3 +105,13 @@ AO3 doesn't write History straight away. Visits are queued and copied in by an h
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Credits
+
+The reader bundles these fonts, each under the [SIL Open Font License 1.1](https://openfontlicense.org). Their licence texts ship in the app and live in [app/src/main/assets/licenses](app/src/main/assets/licenses).
+
+- [Literata](https://github.com/googlefonts/literata), by the Literata Project Authors
+- [Inter](https://github.com/rsms/inter), by the Inter Project Authors
+- [Atkinson Hyperlegible Next](https://github.com/googlefonts/atkinson-hyperlegible-next), by the Atkinson Hyperlegible Next Project Authors
+- [OpenDyslexic](https://github.com/antijingoist/opendyslexic), by Abbie Gonzalez
+- [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono), by the JetBrains Mono Project Authors

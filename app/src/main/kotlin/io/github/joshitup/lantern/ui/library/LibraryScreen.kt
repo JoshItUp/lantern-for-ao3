@@ -66,6 +66,10 @@ import io.github.joshitup.lantern.ui.search.badgeText
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import io.github.joshitup.lantern.ui.common.LIST_BASE_PADDING
+import io.github.joshitup.lantern.ui.common.beyond
+import io.github.joshitup.lantern.ui.common.rememberListSides
+import io.github.joshitup.lantern.ui.common.heightForLabel
 
 /** Items from the end of the list at which the next page is requested (as in Search). */
 private const val PREFETCH_DISTANCE = 5
@@ -94,7 +98,7 @@ private fun LibrarySection.emptyText() = when (this) {
 fun LibraryScreen(
     vm: LibraryViewModel,
     downloadsVm: DownloadsViewModel,
-    /** The bottom bar overlays this screen; the list pads by it (constant, so nothing relayouts). */
+    /** The bottom bar overlays this screen; the list pads by it (its measured height, which only changes with the system font size). */
     bottomBarHeight: Dp,
     onAccount: () -> Unit,
     onOpenWork: OpenWork,
@@ -174,7 +178,10 @@ fun LibraryScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun Tabs(selected: Int, onTap: (Int) -> Unit) {
+    // Lined up with the cards: their extra side padding on wide screens, a cutout or a side navigation bar.
+    val extra = rememberListSides().beyond(LIST_BASE_PADDING)
     SecondaryScrollableTabRow(
+        modifier = Modifier.padding(start = extra.start, end = extra.end),
         selectedTabIndex = selected,
         containerColor = MaterialTheme.colorScheme.background,
         contentColor = MaterialTheme.colorScheme.onBackground,
@@ -193,7 +200,8 @@ private fun Tabs(selected: Int, onTap: (Int) -> Unit) {
                 onClick = { onTap(i) },
                 selectedContentColor = MaterialTheme.colorScheme.onBackground,
                 unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.height(44.dp),
+                // Grows with the label at large font sizes.
+                modifier = Modifier.height(heightForLabel(44.dp, MaterialTheme.typography.labelLarge)),
                 text = {
                     Text(
                         tab.label(),
@@ -248,6 +256,7 @@ private fun SectionList(
     }
 
     val bottomInset = WindowInsets.navigationBarsIgnoringVisibility.asPaddingValues().calculateBottomPadding()
+    val sides = rememberListSides()
     PullToRefreshBox(
         isRefreshing = s.refreshing && s.pulled,
         onRefresh = onRefresh,
@@ -258,7 +267,7 @@ private fun SectionList(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 // The zero-height "top" item plus the item spacing gives the gap above the first card.
-                start = 12.dp, end = 12.dp, top = 0.dp,
+                start = sides.start, end = sides.end, top = 0.dp,
                 bottom = bottomInset + bottomBarHeight + 24.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(if (section == LibrarySection.SUBSCRIPTIONS) 8.dp else 10.dp),

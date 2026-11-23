@@ -55,6 +55,9 @@ import io.github.joshitup.lantern.ui.search.badgeText
 import io.github.joshitup.lantern.ui.search.errorMessage
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import io.github.joshitup.lantern.ui.common.LIST_BASE_PADDING
+import io.github.joshitup.lantern.ui.common.beyond
+import io.github.joshitup.lantern.ui.common.rememberListSides
 
 /** Items from the end of the list at which the next page is requested (as in Search). */
 private const val PREFETCH_DISTANCE = 5
@@ -101,7 +104,12 @@ fun WorkListScreen(
             .background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility),
     ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Lined up with the cards: their extra side padding on wide screens, a cutout or a side navigation bar.
+        val extra = rememberListSides().beyond(LIST_BASE_PADDING)
+        Row(
+            Modifier.fillMaxWidth().padding(start = extra.start, end = extra.end).padding(horizontal = 4.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             IconButton(onClick = onBack) { Icon(AppIcons.Back, contentDescription = "Back") }
             Text(
                 state.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -116,10 +124,11 @@ fun WorkListScreen(
             }
         }
         val bottomInset = WindowInsets.navigationBarsIgnoringVisibility.asPaddingValues().calculateBottomPadding()
+        val sides = rememberListSides()
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 10.dp, bottom = bottomInset + 24.dp),
+            contentPadding = PaddingValues(start = sides.start, end = sides.end, top = 10.dp, bottom = bottomInset + 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (state.works.isEmpty()) {
