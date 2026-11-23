@@ -599,6 +599,55 @@ class SessionTest {
         assertFalse(s.state.value.signedIn)
     }
 
+    /** A Session whose sign-in POST with [password] waits on the returned gate (after AO3 answered it). */
+    private fun TestScope.heldSignIn(password: String): Pair<Session, CompletableDeferred<Unit>> {
+        val postGate = CompletableDeferred<Unit>()
+        val held = object : Fetcher by fake {
+            override suspend fun post(url: HttpUrl, fields: List<Pair<String, String>>, accept: String?, interactive: Boolean): FetchResult {
+                val r = fake.post(url, fields, accept, interactive)
+                if (("user[password]" to password) in fields) postGate.await()
+                return r
+            }
+        }
+        return Session(held, store, { cookiesCleared++ }, backgroundScope, clock = { now }) to postGate
+    }
+
+    @Test fun `a signIn whose POST lands after signOut clears the cookies it brought`() = runTest {
+        fake.ok(loginUrl.toHttpUrl(), loginPage())
+        fake.postResponse = { _, _ -> ok(signedIn()) }
+        fake.responses[logoutUrl] = FetchResult.Failed(null)
+        val (s, postGate) = heldSignIn("pw")
+
+        val signIn = async { s.signIn("Me", "pw") }
+        runCurrent() // AO3 accepted the login; its session cookies are in the jar
+        s.signOut()
+        assertEquals(1, cookiesCleared)
+        postGate.complete(Unit)
+
+        val r = signIn.await()
+        assertTrue(r is SignInResult.Error && (r.result as FetchResult.Failed).cause is SessionSupersededException)
+        assertEquals(2, cookiesCleared)
+        assertEquals(AccountState(false, null), s.state.value)
+    }
+
+    @Test fun `a superseded signIn leaves a newer signIn's cookies alone`() = runTest {
+        fake.ok(loginUrl.toHttpUrl(), loginPage())
+        fake.postResponse = { _, _ -> ok(signedIn()) }
+        fake.responses[logoutUrl] = FetchResult.Failed(null)
+        val (s, postGate) = heldSignIn("old")
+
+        val first = async { s.signIn("Me", "old") }
+        runCurrent()
+        s.signOut()
+        assertSame(SignInResult.Ok, s.signIn("Me", "new"))
+        val cleared = cookiesCleared
+        postGate.complete(Unit)
+
+        assertTrue(first.await() is SignInResult.Error)
+        assertEquals(cleared, cookiesCleared)
+        assertTrue(s.state.value.signedIn)
+    }
+
     @Test fun `a background Blocked pause does not stop interactive re-login`() = runTest {
         store.save("Me", "pw")
         var loggedIn = false
