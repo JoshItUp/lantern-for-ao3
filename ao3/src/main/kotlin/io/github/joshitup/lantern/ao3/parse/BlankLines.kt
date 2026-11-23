@@ -9,9 +9,9 @@ import io.github.joshitup.lantern.ao3.model.Span
  */
 object BlankLines {
     /** Two or more line breaks, with only spaces between them. */
-    private val BREAK = Regex("\n(?:[ \t ]*\n)+")
+    private val BREAK = Regex("\n(?:[ \t\u00A0]*\n)+")
 
-    private fun isEdge(c: Char) = c == '\n' || c == ' ' || c == '\t' || c == ' '
+    private fun isEdge(c: Char) = c == '\n' || c == ' ' || c == '\t' || c == '\u00A0'
 
     fun split(blocks: List<Block>): List<Block> = blocks.flatMap { split(it) }
 
