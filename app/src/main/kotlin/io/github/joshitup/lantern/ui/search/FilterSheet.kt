@@ -55,9 +55,28 @@ import io.github.joshitup.lantern.ao3.model.SortColumn
 import io.github.joshitup.lantern.ao3.model.Warning
 import kotlinx.coroutines.flow.Flow
 
-/** AO3 takes one rating per search: picking another replaces it, picking the chosen one clears it. */
-fun toggleRating(current: Set<Rating>, tapped: Rating): Set<Rating> =
-    if (tapped in current) emptySet() else setOf(tapped)
+/** A filter toggle's state: tapping cycles off → included → excluded → off. */
+enum class TriState { OFF, INCLUDED, EXCLUDED }
+
+fun <T> triState(v: T, included: Set<T>, excluded: Set<T>): TriState = when (v) {
+    in included -> TriState.INCLUDED
+    in excluded -> TriState.EXCLUDED
+    else -> TriState.OFF
+}
+
+/**
+ * The (included, excluded) sets after tapping [v]: off → included → excluded → off. With [singleInclude]
+ * (ratings) an include replaces any other include; exclusions are never touched by another value's tap.
+ */
+fun <T> cycle(v: T, included: Set<T>, excluded: Set<T>, singleInclude: Boolean = false): Pair<Set<T>, Set<T>> =
+    when (triState(v, included, excluded)) {
+        TriState.OFF -> (if (singleInclude) setOf(v) else included + v) to excluded
+        TriState.INCLUDED -> (included - v) to (excluded + v)
+        TriState.EXCLUDED -> included to (excluded - v)
+    }
+
+/** Reset: every filter back to its default, keeping only the search bar's text. */
+fun resetFilters(q: SearchQuery): SearchQuery = SearchQuery(anyField = q.anyField)
 
 /** How many filter groups differ from defaults (any-field text excluded: it lives in the search bar). */
 fun activeFilterCount(q: SearchQuery): Int {
@@ -65,7 +84,9 @@ fun activeFilterCount(q: SearchQuery): Int {
     return listOf(
         q.title != d.title, q.creators != d.creators, q.fandoms.isNotEmpty(), q.characters.isNotEmpty(),
         q.relationships.isNotEmpty(), q.freeforms.isNotEmpty(), q.excludedTags.isNotEmpty(),
-        q.ratings.isNotEmpty(), q.warnings.isNotEmpty(), q.categories.isNotEmpty(),
+        q.excludedCharacters.isNotEmpty(), q.excludedRelationships.isNotEmpty(),
+        q.ratings.isNotEmpty() || q.excludedRatings.isNotEmpty(), q.warnings.isNotEmpty() || q.excludedWarnings.isNotEmpty(),
+        q.categories.isNotEmpty() || q.excludedCategories.isNotEmpty(),
         q.completion != d.completion, q.crossover != d.crossover, q.wordsFrom != null || q.wordsTo != null,
         q.language.isNotBlank(), q.updatedWithin.isNotBlank(),
         q.sort != d.sort || q.sortDescending != d.sortDescending,
@@ -113,7 +134,10 @@ fun FilterSheet(
 
                 Section("Rating") {
                     Rating.entries.forEach { r ->
-                        Choice(r.label, r in q.ratings) { q = q.copy(ratings = toggleRating(q.ratings, r)) }
+                        Choice(r.label, r in q.ratings) {
+                            val (inc, exc) = cycle(r, q.ratings, q.excludedRatings, singleInclude = true)
+                            q = q.copy(ratings = inc, excludedRatings = exc)
+                        }
                     }
                 }
                 Section("Warnings") {
@@ -170,7 +194,7 @@ fun FilterSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = { q = SearchQuery(anyField = q.anyField) }) { Text("Reset") }
+                TextButton(onClick = { q = resetFilters(q) }) { Text("Reset") }
                 Spacer(Modifier.weight(1f))
                 OutlinedButton(onClick = { onSaveAsPreset(q) }) { Text("Save as preset") }
                 Button(onClick = { onApply(q) }) { Text("Apply") }

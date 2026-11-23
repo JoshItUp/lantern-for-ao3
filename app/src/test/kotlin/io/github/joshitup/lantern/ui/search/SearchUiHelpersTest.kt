@@ -1,6 +1,8 @@
 package io.github.joshitup.lantern.ui.search
 
+import io.github.joshitup.lantern.ao3.model.Category
 import io.github.joshitup.lantern.ao3.model.Rating
+import io.github.joshitup.lantern.ao3.model.Warning
 import io.github.joshitup.lantern.ao3.model.SearchQuery
 import io.github.joshitup.lantern.ao3.model.SortColumn
 import io.github.joshitup.lantern.ao3.net.FetchResult
@@ -11,10 +13,46 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SearchUiHelpersTest {
-    @Test fun `rating is single valued`() {
-        assertEquals(setOf(Rating.TEEN), toggleRating(emptySet(), Rating.TEEN))
-        assertEquals(setOf(Rating.MATURE), toggleRating(setOf(Rating.TEEN), Rating.MATURE))
-        assertEquals(emptySet<Rating>(), toggleRating(setOf(Rating.TEEN), Rating.TEEN))
+    @Test fun cycle_offIncludedExcludedOff() {
+        val mm = Category.MM
+        var state = emptySet<Category>() to emptySet<Category>()
+        state = cycle(mm, state.first, state.second); assertEquals(setOf(mm) to emptySet<Category>(), state)
+        assertEquals(TriState.INCLUDED, triState(mm, state.first, state.second))
+        state = cycle(mm, state.first, state.second); assertEquals(emptySet<Category>() to setOf(mm), state)
+        assertEquals(TriState.EXCLUDED, triState(mm, state.first, state.second))
+        state = cycle(mm, state.first, state.second); assertEquals(emptySet<Category>() to emptySet<Category>(), state)
+        assertEquals(TriState.OFF, triState(mm, state.first, state.second))
+    }
+
+    @Test fun ratingCycle_singleInclude() {
+        assertEquals(
+            setOf(Rating.MATURE) to setOf(Rating.EXPLICIT),
+            cycle(Rating.MATURE, setOf(Rating.TEEN), setOf(Rating.EXPLICIT), singleInclude = true),
+        )
+    }
+
+    @Test fun ratingCycle_neverBoth() {
+        assertEquals(
+            emptySet<Rating>() to setOf(Rating.MATURE),
+            cycle(Rating.MATURE, setOf(Rating.MATURE), emptySet(), singleInclude = true),
+        )
+    }
+
+    @Test fun activeFilterCount_countsExclusions() {
+        assertEquals(1, activeFilterCount(SearchQuery(excludedCharacters = listOf("C"))))
+        assertEquals(1, activeFilterCount(SearchQuery(excludedRelationships = listOf("A/B"))))
+        assertEquals(1, activeFilterCount(SearchQuery(excludedRatings = setOf(Rating.EXPLICIT))))
+        assertEquals(1, activeFilterCount(SearchQuery(ratings = setOf(Rating.TEEN), excludedRatings = setOf(Rating.EXPLICIT))))
+        assertEquals(1, activeFilterCount(SearchQuery(excludedWarnings = setOf(Warning.MCD))))
+        assertEquals(1, activeFilterCount(SearchQuery(excludedCategories = setOf(Category.MM))))
+    }
+
+    @Test fun reset_clearsExclusions() {
+        val full = SearchQuery(
+            anyField = "x", excludedTags = listOf("T"), excludedCharacters = listOf("C"), excludedRelationships = listOf("A/B"),
+            excludedRatings = setOf(Rating.EXPLICIT), excludedWarnings = setOf(Warning.MCD), excludedCategories = setOf(Category.MM),
+        )
+        assertEquals(SearchQuery(anyField = "x"), resetFilters(full))
     }
 
     @Test fun `badge prefers progress over read mark`() {
