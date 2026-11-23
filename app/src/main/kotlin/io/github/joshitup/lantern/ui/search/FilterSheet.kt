@@ -54,10 +54,42 @@ import io.github.joshitup.lantern.ao3.model.SearchQuery
 import io.github.joshitup.lantern.ao3.model.SortColumn
 import io.github.joshitup.lantern.ao3.model.Warning
 import kotlinx.coroutines.flow.Flow
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import io.github.joshitup.lantern.ui.common.AppIcons
+import androidx.compose.ui.semantics.stateDescription
 
-/** AO3 takes one rating per search: picking another replaces it, picking the chosen one clears it. */
-fun toggleRating(current: Set<Rating>, tapped: Rating): Set<Rating> =
-    if (tapped in current) emptySet() else setOf(tapped)
+/** A filter toggle's state: tapping cycles off → included → excluded → off. */
+enum class TriState { OFF, INCLUDED, EXCLUDED }
+
+fun <T> triState(v: T, included: Set<T>, excluded: Set<T>): TriState = when (v) {
+    in included -> TriState.INCLUDED
+    in excluded -> TriState.EXCLUDED
+    else -> TriState.OFF
+}
+
+/**
+ * The (included, excluded) sets after tapping [v]: off → included → excluded → off. With [singleInclude]
+ * (ratings) an include replaces any other include; exclusions are never touched by another value's tap.
+ */
+fun <T> cycle(v: T, included: Set<T>, excluded: Set<T>, singleInclude: Boolean = false): Pair<Set<T>, Set<T>> =
+    when (triState(v, included, excluded)) {
+        TriState.OFF -> (if (singleInclude) setOf(v) else included + v) to excluded
+        TriState.INCLUDED -> (included - v) to (excluded + v)
+        TriState.EXCLUDED -> included to (excluded - v)
+    }
+
+/** This list without [names] (ignoring case): a name added to an include list leaves its exclude list, and back. */
+fun List<String>.minusNames(names: List<String>): List<String> {
+    val drop = names.map { it.trim().lowercase() }.toSet()
+    return filter { it.trim().lowercase() !in drop }
+}
+
+/** Reset: every filter back to its default, keeping only the search bar's text. */
+fun resetFilters(q: SearchQuery): SearchQuery = SearchQuery(anyField = q.anyField)
 
 /** How many filter groups differ from defaults (any-field text excluded: it lives in the search bar). */
 fun activeFilterCount(q: SearchQuery): Int {
@@ -65,7 +97,9 @@ fun activeFilterCount(q: SearchQuery): Int {
     return listOf(
         q.title != d.title, q.creators != d.creators, q.fandoms.isNotEmpty(), q.characters.isNotEmpty(),
         q.relationships.isNotEmpty(), q.freeforms.isNotEmpty(), q.excludedTags.isNotEmpty(),
-        q.ratings.isNotEmpty(), q.warnings.isNotEmpty(), q.categories.isNotEmpty(),
+        q.excludedCharacters.isNotEmpty(), q.excludedRelationships.isNotEmpty(),
+        q.ratings.isNotEmpty() || q.excludedRatings.isNotEmpty(), q.warnings.isNotEmpty() || q.excludedWarnings.isNotEmpty(),
+        q.categories.isNotEmpty() || q.excludedCategories.isNotEmpty(),
         q.completion != d.completion, q.crossover != d.crossover, q.wordsFrom != null || q.wordsTo != null,
         q.language.isNotBlank(), q.updatedWithin.isNotBlank(),
         q.sort != d.sort || q.sortDescending != d.sortDescending,
@@ -106,24 +140,45 @@ fun FilterSheet(
                 Field("Creators", q.creators) { q = q.copy(creators = it) }
 
                 TagInput("Fandoms", "fandom", q.fandoms, autocomplete) { q = q.copy(fandoms = it) }
-                TagInput("Relationships", "relationship", q.relationships, autocomplete) { q = q.copy(relationships = it) }
-                TagInput("Characters", "character", q.characters, autocomplete) { q = q.copy(characters = it) }
+                // A name is never both included and excluded: adding it to one list takes it out of the other.
+                TagInput("Relationships", "relationship", q.relationships, autocomplete) {
+                    q = q.copy(relationships = it, excludedRelationships = q.excludedRelationships.minusNames(it))
+                }
+                TagInput("Exclude relationships", "relationship", q.excludedRelationships, autocomplete, excluded = true) {
+                    q = q.copy(excludedRelationships = it, relationships = q.relationships.minusNames(it))
+                }
+                TagInput("Characters", "character", q.characters, autocomplete) {
+                    q = q.copy(characters = it, excludedCharacters = q.excludedCharacters.minusNames(it))
+                }
+                TagInput("Exclude characters", "character", q.excludedCharacters, autocomplete, excluded = true) {
+                    q = q.copy(excludedCharacters = it, characters = q.characters.minusNames(it))
+                }
                 TagInput("Additional tags", "freeform", q.freeforms, autocomplete) { q = q.copy(freeforms = it) }
-                TagInput("Exclude tags", "tag", q.excludedTags, autocomplete) { q = q.copy(excludedTags = it) }
+                TagInput("Exclude other tags", "tag", q.excludedTags, autocomplete, excluded = true) { q = q.copy(excludedTags = it) }
 
                 Section("Rating") {
                     Rating.entries.forEach { r ->
-                        Choice(r.label, r in q.ratings) { q = q.copy(ratings = toggleRating(q.ratings, r)) }
+                        // One rating included at most; any number excluded.
+                        TriStateChip(r.label, triState(r, q.ratings, q.excludedRatings)) {
+                            val (inc, exc) = cycle(r, q.ratings, q.excludedRatings, singleInclude = true)
+                            q = q.copy(ratings = inc, excludedRatings = exc)
+                        }
                     }
                 }
                 Section("Warnings") {
                     Warning.entries.forEach { w ->
-                        Choice(w.label, w in q.warnings) { q = q.copy(warnings = q.warnings.toggle(w)) }
+                        TriStateChip(w.label, triState(w, q.warnings, q.excludedWarnings)) {
+                            val (inc, exc) = cycle(w, q.warnings, q.excludedWarnings)
+                            q = q.copy(warnings = inc, excludedWarnings = exc)
+                        }
                     }
                 }
                 Section("Categories") {
                     Category.entries.forEach { c ->
-                        Choice(c.label, c in q.categories) { q = q.copy(categories = q.categories.toggle(c)) }
+                        TriStateChip(c.label, triState(c, q.categories, q.excludedCategories)) {
+                            val (inc, exc) = cycle(c, q.categories, q.excludedCategories)
+                            q = q.copy(categories = inc, excludedCategories = exc)
+                        }
                     }
                 }
 
@@ -170,7 +225,7 @@ fun FilterSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = { q = SearchQuery(anyField = q.anyField) }) { Text("Reset") }
+                TextButton(onClick = { q = resetFilters(q) }) { Text("Reset") }
                 Spacer(Modifier.weight(1f))
                 OutlinedButton(onClick = { onSaveAsPreset(q) }) { Text("Save as preset") }
                 Button(onClick = { onApply(q) }) { Text("Apply") }
@@ -182,7 +237,6 @@ fun FilterSheet(
 private const val MIN_SUGGEST_CHARS = 2
 private const val MAX_SUGGESTIONS = 8
 
-private fun <T> Set<T>.toggle(v: T): Set<T> = if (v in this) this - v else this + v
 
 @Composable
 private fun Label(text: String) {
@@ -195,6 +249,43 @@ private fun Section(title: String, content: @Composable () -> Unit) {
         Label(title)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { content() }
     }
+}
+
+/**
+ * A filter toggle with three states: off, included (the usual selected look) and excluded (a muted red with a
+ * minus sign); TalkBack reads the state as one word, so it isn't told apart by colour alone.
+ */
+@Composable
+internal fun TriStateChip(label: String, state: TriState, onClick: () -> Unit) {
+    val excluded = state == TriState.EXCLUDED
+    val colors = if (excluded) {
+        FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.errorContainer,
+            selectedLabelColor = MaterialTheme.colorScheme.onErrorContainer,
+            selectedLeadingIconColor = MaterialTheme.colorScheme.onErrorContainer,
+        )
+    } else {
+        FilterChipDefaults.filterChipColors()
+    }
+    FilterChip(
+        selected = state != TriState.OFF,
+        onClick = onClick,
+        label = { Text(label) },
+        leadingIcon = if (excluded) {
+            { Icon(AppIcons.Remove, contentDescription = null, Modifier.size(FilterChipDefaults.IconSize)) }
+        } else {
+            null
+        },
+        colors = colors,
+        // One spoken state instead of "selected" (an excluded chip is selected only for its look).
+        modifier = Modifier.semantics {
+            stateDescription = when (state) {
+                TriState.INCLUDED -> "Included"
+                TriState.EXCLUDED -> "Excluded"
+                TriState.OFF -> "Not selected"
+            }
+        },
+    )
 }
 
 @Composable
@@ -241,6 +332,7 @@ private fun TagInput(
     kind: String,
     values: List<String>,
     autocomplete: (String, String) -> Flow<List<String>>,
+    excluded: Boolean = false,
     onChange: (List<String>) -> Unit,
 ) {
     var text by rememberSaveable(kind) { mutableStateOf("") }
@@ -258,21 +350,7 @@ private fun TagInput(
         suggestions = emptyList()
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (values.isNotEmpty()) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                values.forEach { v ->
-                    Text(
-                        "$v  ✕",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier
-                            .background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(8.dp))
-                            .clickable { onChange(values - v) }
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                    )
-                }
-            }
-        }
+        if (values.isNotEmpty()) TagChips(values, excluded) { v -> onChange(values - v) }
         OutlinedTextField(
             value = text, onValueChange = { text = it }, label = { Text(label) }, singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -304,6 +382,30 @@ private fun TagInput(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * A field's names, each tapped to remove. Names in an Exclude field share the excluded toggles' look (muted red,
+ * a leading minus) and are read as excluded, so they're never mistaken for included ones.
+ */
+@Composable
+internal fun TagChips(values: List<String>, excluded: Boolean, onRemove: (String) -> Unit) {
+    val container = if (excluded) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+    val content = if (excluded) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        values.forEach { v ->
+            Text(
+                if (excluded) "−  $v  ✕" else "$v  ✕",
+                fontSize = 13.sp,
+                color = content,
+                modifier = Modifier
+                    .background(container, RoundedCornerShape(8.dp))
+                    .clickable { onRemove(v) }
+                    .semantics { contentDescription = if (excluded) "$v, excluded. Remove" else "$v. Remove" }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            )
         }
     }
 }

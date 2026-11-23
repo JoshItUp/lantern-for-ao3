@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Search filters can exclude as well as include. Tap a rating, warning or category once to include it and again to exclude it (shown in red with a minus sign). Characters and relationships have their own "Exclude" fields. Exclusions save with presets.
+
 ## [1.1.0] - 2026-11-23
 
 ### Added

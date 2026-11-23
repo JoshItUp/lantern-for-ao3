@@ -47,7 +47,25 @@ data class SearchQuery(
     val language: String = "",            // AO3 language code e.g. "en"
     val updatedWithin: String = "",       // AO3 revised_at syntax e.g. "< 7 days"
     val sort: SortColumn = SortColumn.UPDATED, val sortDescending: Boolean = true,
-)
+    // Exclusions (defaults keep presets saved before them readable). All go to AO3 as excluded tag names.
+    val excludedCharacters: List<String> = emptyList(), val excludedRelationships: List<String> = emptyList(),
+    val excludedRatings: Set<Rating> = emptySet(), val excludedWarnings: Set<Warning> = emptySet(),
+    val excludedCategories: Set<Category> = emptySet(),
+) {
+    /**
+     * Every excluded name, as AO3 matches them (against all of a work's tags, ratings, warnings and categories
+     * included): other tags, relationships, characters, then the excluded toggles. Blank and repeated names
+     * (ignoring case) are dropped.
+     */
+    fun excludedNames(): List<String> {
+        val all = excludedTags + excludedRelationships + excludedCharacters +
+            Rating.entries.filter { it in excludedRatings }.map { it.label } +
+            Warning.entries.filter { it in excludedWarnings }.map { it.label } +
+            Category.entries.filter { it in excludedCategories }.map { it.label }
+        val seen = HashSet<String>()
+        return all.map { it.trim() }.filter { it.isNotEmpty() && seen.add(it.lowercase()) }
+    }
+}
 
 @Serializable
 data class WorkBlurb(
