@@ -7,6 +7,7 @@ import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
 import io.github.joshitup.lantern.data.db.AppDatabase
+import io.github.joshitup.lantern.data.db.DownloadDao
 import io.github.joshitup.lantern.data.db.DownloadEntity
 import io.github.joshitup.lantern.data.db.DownloadJob
 import kotlinx.coroutines.CompletableDeferred
@@ -140,6 +141,19 @@ class DownloadWorkerTest {
         assertEquals(DownloadJob.FAILED, r1.job)
         assertEquals(DownloadFailure.NETWORK.message, r1.failure)
         assertEquals(DownloadJob.NONE, db.downloadDao().get(2L)!!.job)
+    }
+
+    @Test fun queueReadThrows_retriesLater() = runTest {
+        val dao = db.downloadDao()
+        val broken = object : DownloadDao by dao {
+            override suspend fun nextQueued(): DownloadEntity? = throw IllegalStateException("disk I/O")
+        }
+        repo = DownloadRepository(broken, DownloadStore(root, dao, Json, Dispatchers.Unconfined) { 1L }, {}, { 1L })
+        runCatching { repo.startup() } // its own nextQueued() throws, but it still marks the repo ready
+        queue(1L, requestedAt = 10)
+        val result = worker(fakeRun()).doWork()
+        assertEquals(ListenableWorker.Result.retry(), result)
+        assertEquals(emptyList<Pair<Long, Boolean>>(), calls)
     }
 
     @Test fun cancelAfterCommit_notRequeued() = runTest {
