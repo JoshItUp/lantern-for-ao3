@@ -134,10 +134,12 @@ jobs:
           apk=app/build/outputs/apk/release/app-release.apk
           apksigner="$ANDROID_HOME/build-tools/$APKSIGNER_BUILD_TOOLS/apksigner"
           out=$("$apksigner" verify --print-certs "$apk")
-          signers=$(printf '%s\n' "$out" | grep -c '^Signer #[0-9]* certificate SHA-256 digest:' || true)
-          actual=$(printf '%s\n' "$out" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr 'A-F' 'a-f' | tr -d '[:space:]')
+          # apksigner labels signers by scheme ("V2 Signer: ...") or by number ("Signer #1: ...").
+          digests=$(printf '%s\n' "$out" | sed -n -E 's/^[^:]*[Ss]igner[^:]*: certificate SHA-256 digest: *//p' | tr 'A-F' 'a-f' | tr -d '\r ' | sort -u)
+          signers=$(printf '%s\n' "$digests" | grep -c . || true)
+          actual=$digests
           if [ "$signers" != "1" ]; then
-            echo "::error::Expected exactly one signer, found $signers."
+            echo "::error::Expected exactly one signing certificate, found $signers."
             exit 1
           fi
           if [ "$actual" != "$LANTERN_CERT_SHA256" ]; then
