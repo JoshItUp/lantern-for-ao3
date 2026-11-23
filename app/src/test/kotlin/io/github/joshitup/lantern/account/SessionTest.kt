@@ -222,6 +222,9 @@ class SessionTest {
         val s = session()
         val seen = mutableListOf<String?>()
         val job = backgroundScope.launch(start = CoroutineStart.UNDISPATCHED) { s.actingAccount.collect { seen += it } }
+        // merge() subscribes on the next tick; let it see "Me" before signOut() suspends on the IO thread.
+        runCurrent()
+        assertEquals(listOf<String?>("Me"), seen)
         fake.ok(logoutUrl.toHttpUrl(), signedOut)
         s.signOut()
         runCurrent()
