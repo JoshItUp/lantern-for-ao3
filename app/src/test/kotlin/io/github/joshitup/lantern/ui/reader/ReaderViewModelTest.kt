@@ -110,6 +110,27 @@ class ReaderViewModelTest {
         assertEquals(4 to 20, vm.state.value.restore)
     }
 
+    @Test fun legacyRow_insideSplitBlock_handsTheScreenTheBlock() = test {
+        splitBody()
+        progress.rows.value = listOf(saved(102, 2, 1, 900).copy(layout = LAYOUT_LEGACY))
+        val vm = vm(); advanceUntilIdle()
+        val s = vm.state.value
+        assertEquals(1 to 0, s.restore)
+        val inBlock = s.restoreInBlock!!
+        assertEquals(1, inBlock.firstItem)
+        assertEquals(900, inBlock.offsetPx)
+        assertEquals(source.body!![0], inBlock.block)
+        vm.restoreApplied()
+        assertNull(vm.state.value.restoreInBlock)
+    }
+
+    @Test fun legacyRow_outsideSplitBlock_noInBlock() = test {
+        splitBody()
+        progress.rows.value = listOf(saved(102, 2, 2, 20).copy(layout = LAYOUT_LEGACY))
+        val vm = vm(); advanceUntilIdle()
+        assertNull(vm.state.value.restoreInBlock)
+    }
+
     @Test fun splitRow_usedAsIs() = test {
         splitBody()
         progress.rows.value = listOf(saved(102, 2, 2, 20).copy(layout = LAYOUT_SPLIT))

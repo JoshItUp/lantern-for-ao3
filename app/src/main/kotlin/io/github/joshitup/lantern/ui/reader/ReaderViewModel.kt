@@ -70,6 +70,8 @@ data class ReaderUiState(
     val error: FetchResult? = null,
     /** blockIndex (LazyColumn item index), offsetPx to scroll to once after load; cleared by [ReaderViewModel.restoreApplied]. */
     val restore: Pair<Int, Int>? = null,
+    /** With [restore], for a place saved before splitting inside a block that now splits: placed by the screen. */
+    val restoreInBlock: InBlockRestore? = null,
     val controlsVisible: Boolean = false,
     val fontSizeSp: Int = 18,
     val font: ReaderFont = ReaderFont.SYSTEM,
@@ -287,9 +289,11 @@ class ReaderViewModel(
             is Loaded.Ok -> {
                 val loadedRef = r.value.ref
                 rememberChapter(loadedRef)
+                val content = r.value.splitForReader()
+                val place = restoreFor(loadedRef, r.value)
                 _state.update {
-                    it.copy(chapters = listOf(loadedRef), index = 0, chapterListLoaded = false, content = r.value.splitForReader(),
-                        loading = false, error = null, restore = restoreFor(loadedRef, r.value))
+                    it.copy(chapters = listOf(loadedRef), index = 0, chapterListLoaded = false, content = content,
+                        loading = false, error = null, restore = place?.first, restoreInBlock = place?.second)
                 }
             }
             is Loaded.Error -> _state.update { it.copy(loading = false, error = r.result) }
@@ -300,8 +304,10 @@ class ReaderViewModel(
         when (val r = source.chapter(workId, ref)) {
             is Loaded.Ok -> {
                 rememberChapter(ref)
+                val content = r.value.splitForReader()
+                val place = restoreFor(ref, r.value)
                 _state.update {
-                    it.copy(content = r.value.splitForReader(), loading = false, error = null, restore = restoreFor(ref, r.value))
+                    it.copy(content = content, loading = false, error = null, restore = place?.first, restoreInBlock = place?.second)
                 }
                 _state.value.chapters.getOrNull(index + 1)?.let { source.prefetch(workId, it) }
             }
@@ -309,10 +315,17 @@ class ReaderViewModel(
         }
     }
 
-    /** The saved place in [ref], in the split layout; [original] is the chapter as loaded (unsplit). */
-    private fun restoreFor(ref: ChapterRef, original: ChapterContent): Pair<Int, Int>? =
+    /**
+     * The saved place in [ref], in the split layout, and (for a legacy place inside a block that now splits)
+     * what the screen needs to place it inside that block. [original] is the chapter as loaded (unsplit).
+     */
+    private fun restoreFor(ref: ChapterRef, original: ChapterContent): Pair<Pair<Int, Int>, InBlockRestore?>? =
         saved?.takeIf { ref.matches(it.chapterId, it.chapterNumber) }?.let {
-            if (it.layout == LAYOUT_LEGACY) legacyRestore(original, it.blockIndex, it.blockOffsetPx) else it.blockIndex to it.blockOffsetPx
+            if (it.layout == LAYOUT_LEGACY) {
+                legacyRestore(original, it.blockIndex, it.blockOffsetPx) to legacyInBlock(original, it.blockIndex, it.blockOffsetPx)
+            } else {
+                (it.blockIndex to it.blockOffsetPx) to null
+            }
         }
 
     fun goTo(index: Int) {
@@ -322,7 +335,7 @@ class ReaderViewModel(
         flushProgress()
         loadJob?.cancel()
         // Drop the old chapter before loading the new one: only one chapter is held in memory.
-        _state.update { it.copy(index = index, content = null, loading = true, error = null, restore = null) }
+        _state.update { it.copy(index = index, content = null, loading = true, error = null, restore = null, restoreInBlock = null) }
         val ref = s.chapters[index]
         rememberChapter(ref)
         loadJob = viewModelScope.launch { loadChapter(index, ref) }
@@ -378,7 +391,7 @@ class ReaderViewModel(
     fun toggleControls() = _state.update { it.copy(controlsVisible = !it.controlsVisible) }
 
     /** Called by the screen once it has scrolled to [ReaderUiState.restore]. */
-    fun restoreApplied() = _state.update { it.copy(restore = null) }
+    fun restoreApplied() = _state.update { it.copy(restore = null, restoreInBlock = null) }
 
     /**
      * Written once reports have paused for [SAVE_DEBOUNCE_MS]; ignored until content is shown and any

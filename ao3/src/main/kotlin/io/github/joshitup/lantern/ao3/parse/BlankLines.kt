@@ -22,17 +22,20 @@ object BlankLines {
         else -> listOf(block)
     }
 
-    /** Empty when [text] has no blank line, so the caller keeps its block as it is. */
-    private fun pieces(text: String, spans: List<Span>): List<Pair<String, List<Span>>> {
+    /**
+     * Where each piece of [text] sits in it, in order (what [split] cuts out); empty when [text] has no blank
+     * line. Every piece starts a line of its own, so it wraps exactly as it did inside the whole text.
+     */
+    fun ranges(text: String): List<IntRange> {
         if (!BREAK.containsMatchIn(text)) return emptyList()
-        val out = ArrayList<Pair<String, List<Span>>>()
+        val out = ArrayList<IntRange>()
         var from = 0
         fun piece(rawStart: Int, rawEnd: Int) {
             var s = rawStart
             var e = rawEnd
             while (s < e && isEdge(text[s])) s++
             while (e > s && isEdge(text[e - 1])) e--
-            if (s < e) out += text.substring(s, e) to spans.mapNotNull { cut(it, s, e) }
+            if (s < e) out += s until e
         }
         for (m in BREAK.findAll(text)) {
             piece(from, m.range.first)
@@ -41,6 +44,10 @@ object BlankLines {
         piece(from, text.length)
         return out
     }
+
+    /** Empty when [text] has no blank line, so the caller keeps its block as it is. */
+    private fun pieces(text: String, spans: List<Span>): List<Pair<String, List<Span>>> =
+        ranges(text).map { r -> text.substring(r) to spans.mapNotNull { cut(it, r.first, r.last + 1) } }
 
     /** [span]'s part inside `[start, end)`, shifted to the piece; null when it doesn't overlap. */
     private fun cut(span: Span, start: Int, end: Int): Span? {

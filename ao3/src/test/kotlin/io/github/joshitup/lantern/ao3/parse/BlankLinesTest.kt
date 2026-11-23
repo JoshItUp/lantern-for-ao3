@@ -63,4 +63,14 @@ class BlankLinesTest {
             assertEquals(gap, listOf(text("one"), text("two")), BlankLines.split(converted))
         }
     }
+
+    @Test fun ranges_matchPiecesInTheOriginalText() {
+        val src = "\n\nab\n\n\ncd\n \nef"
+        assertEquals(listOf(2 until 4, 7 until 9, 12 until 14), BlankLines.ranges(src))
+        assertEquals(BlankLines.split(text(src)).map { (it as Block.Text).text }, BlankLines.ranges(src).map { src.substring(it) })
+    }
+
+    @Test fun ranges_emptyWithoutBlankLine() {
+        assertEquals(emptyList<IntRange>(), BlankLines.ranges("a\nb"))
+    }
 }
