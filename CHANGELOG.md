@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The README's install steps now explain the Google Play Protect warning. Nothing changes in the app; this release tests silent in-app updates.
+
 ## [1.0.1] - 2026-11-23
 
 ### Changed

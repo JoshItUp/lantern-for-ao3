@@ -47,6 +47,8 @@ Key points:
 2. Allow your browser to install unknown apps when Android asks.
 3. Open the downloaded APK and install it.
 
+Google Play Protect may warn that the app is unrecognised or potentially harmful, because Lantern is installed from outside the Play Store and comes from a developer Play Protect doesn't know. Choose to install anyway. The APK on the Releases page is the one built and signed by this repository's release workflow.
+
 There is no Play Store build.
 
 ## Updates
