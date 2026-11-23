@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-23
+
 ### Changed
 - Internal tidy-up of the updater's states. Nothing changes in use; this release exists to test in-app updating from 1.0.0.
 
