@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Two more reading fonts: Atkinson Hyperlegible, made for legibility, and OpenDyslexic. Inter and Mono now have true italics.
+
 ### Changed
 - Chapters written as one long paragraph with blank lines are now laid out paragraph by paragraph, like every other chapter. Your place in a chapter is kept.
+- On tablets and unfolded foldables, the reader and lists keep a comfortable width instead of stretching edge to edge.
+- In landscape, text and lists stay clear of the camera cutout and a side navigation bar.
+- The bottom bars and Library tabs grow with very large text sizes instead of clipping their labels.
+- Lantern opens on its own dark background on every phone, instead of a flash of the phone's default colour.
 
 ### Fixed
 - TalkBack now reads a work card's authors and series along with the card, not only when each link is focused.
