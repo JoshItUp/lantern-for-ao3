@@ -7,15 +7,15 @@
 # survive. The library's bundled rules cover serializer lookup; keep the generated companions
 # and $serializer classes of our own models explicitly as well.
 -keepattributes RuntimeVisibleAnnotations,AnnotationDefault,InnerClasses,Signature
--if @kotlinx.serialization.Serializable class app.ao3reader.**
+-if @kotlinx.serialization.Serializable class io.github.joshitup.lantern.**
 -keepclassmembers class <1> {
     static <1>$Companion Companion;
     kotlinx.serialization.KSerializer serializer(...);
 }
--keep,includedescriptorclasses class app.ao3reader.**$$serializer { *; }
+-keep,includedescriptorclasses class io.github.joshitup.lantern.**$$serializer { *; }
 # @SerialName values are string literals in generated code, but enum constant names are still
 # used as the default serial names: keep the enums' names for stored presets to stay readable.
--keepclassmembers enum app.ao3reader.ao3.model.** {
+-keepclassmembers enum io.github.joshitup.lantern.ao3.model.** {
     <fields>;
 }
 

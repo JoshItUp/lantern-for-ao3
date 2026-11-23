@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Changelog script tests
+        run: python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+
+      - name: Set up JDK
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Install the SDK platform and build tools
+        run: |
+          set -euo pipefail
+          sdkmanager --install "platforms;android-37.2" "build-tools;37.0.0" > /dev/null
+          for dir in platforms/android-37.2 build-tools/37.0.0; do
+            if [ ! -d "$ANDROID_HOME/$dir" ]; then
+              echo "::error::sdkmanager did not install $dir. Set setup-android's cmdline-tools-version to a build that supports minor API levels."
+              exit 1
+            fi
+          done
+
+      - name: Gradle tests
+        run: ./gradlew --no-daemon :ao3:test :app:testDebugUnitTest

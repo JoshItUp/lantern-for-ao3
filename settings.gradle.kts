@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "AO3Reader"
+rootProject.name = "Lantern"
 include(":ao3", ":app")

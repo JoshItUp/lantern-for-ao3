@@ -1,0 +1,212 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump (the first release is always 1.0.0)
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      APKSIGNER_BUILD_TOOLS: '37.0.0'
+    steps:
+      - name: Check the branch and secrets
+        env:
+          LANTERN_KEYSTORE_B64: ${{ secrets.LANTERN_KEYSTORE_B64 }}
+          LANTERN_KEYSTORE_PASSWORD: ${{ secrets.LANTERN_KEYSTORE_PASSWORD }}
+          LANTERN_KEY_ALIAS: ${{ secrets.LANTERN_KEY_ALIAS }}
+          LANTERN_KEY_PASSWORD: ${{ secrets.LANTERN_KEY_PASSWORD }}
+          LANTERN_CERT_SHA256: ${{ secrets.LANTERN_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Releases run from main only (this run is on $GITHUB_REF)."
+            exit 1
+          fi
+          missing=""
+          for name in LANTERN_KEYSTORE_B64 LANTERN_KEYSTORE_PASSWORD LANTERN_KEY_ALIAS LANTERN_KEY_PASSWORD LANTERN_CERT_SHA256; do
+            if [ -z "${!name:-}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing. Add them under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          if ! [[ "$LANTERN_CERT_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::LANTERN_CERT_SHA256 must be 64 lowercase hex characters (no colons)."
+            exit 1
+          fi
+
+      # The latest main, not the dispatch sha: a run queued behind another release must see its tag.
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Install the SDK platform and build tools
+        run: |
+          set -euo pipefail
+          sdkmanager --install "platforms;android-37.2" "build-tools;$APKSIGNER_BUILD_TOOLS" > /dev/null
+          for dir in "platforms/android-37.2" "build-tools/$APKSIGNER_BUILD_TOOLS"; do
+            if [ ! -d "$ANDROID_HOME/$dir" ]; then
+              echo "::error::sdkmanager did not install $dir. Set setup-android's cmdline-tools-version to a build that supports minor API levels."
+              exit 1
+            fi
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Changelog script tests
+        run: python -m unittest discover -s .github/scripts -p 'test_*.py' -v
+
+      - name: Next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          V=$(python .github/scripts/changelog.py next-version --bump "$BUMP")
+          echo "Releasing $V"
+          echo "V=$V" >> "$GITHUB_ENV"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Gradle tests
+        run: |
+          ./gradlew --no-daemon :ao3:test :app:testDebugUnitTest
+
+      - name: Changelog section
+        run: |
+          set -euo pipefail
+          python .github/scripts/changelog.py section --version "$V" --date "$(date -u +%F)" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Decode the keystore
+        env:
+          LANTERN_KEYSTORE_B64: ${{ secrets.LANTERN_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$LANTERN_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/k.jks"
+          echo "LANTERN_KEYSTORE_FILE=$RUNNER_TEMP/k.jks" >> "$GITHUB_ENV"
+
+      - name: Build the release APK
+        env:
+          LANTERN_KEYSTORE_PASSWORD: ${{ secrets.LANTERN_KEYSTORE_PASSWORD }}
+          LANTERN_KEY_ALIAS: ${{ secrets.LANTERN_KEY_ALIAS }}
+          LANTERN_KEY_PASSWORD: ${{ secrets.LANTERN_KEY_PASSWORD }}
+          LANTERN_CERT_SHA256: ${{ secrets.LANTERN_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon :app:assembleRelease -Plantern.version="$V" -Plantern.certSha256="$LANTERN_CERT_SHA256"
+
+      - name: Verify the APK signature
+        env:
+          LANTERN_CERT_SHA256: ${{ secrets.LANTERN_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/release/app-release.apk
+          apksigner="$ANDROID_HOME/build-tools/$APKSIGNER_BUILD_TOOLS/apksigner"
+          out=$("$apksigner" verify --print-certs "$apk")
+          signers=$(printf '%s\n' "$out" | grep -c '^Signer #[0-9]* certificate SHA-256 digest:' || true)
+          actual=$(printf '%s\n' "$out" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | tr 'A-F' 'a-f' | tr -d '[:space:]')
+          if [ "$signers" != "1" ]; then
+            echo "::error::Expected exactly one signer, found $signers."
+            exit 1
+          fi
+          if [ "$actual" != "$LANTERN_CERT_SHA256" ]; then
+            echo "::error::The APK's signing certificate doesn't match LANTERN_CERT_SHA256 (got $actual)."
+            exit 1
+          fi
+          cp "$apk" "lantern-$V.apk"
+          echo "Signed with the expected certificate."
+
+      - name: Commit the changelog
+        id: commit
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore(release): v$V"
+          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Push the changelog
+        id: push
+        run: git push origin "$RELEASE_SHA:refs/heads/main"
+
+      - name: Publish the release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "v$V" "lantern-$V.apk" \
+            --target "$RELEASE_SHA" \
+            --title "Lantern $V" \
+            --notes-file "$RUNNER_TEMP/notes.md"
+
+      # Runs on failure and on cancellation (failure() is false when a run is cancelled). A push that
+      # failed or was cancelled may still have landed, so the script checks origin/main itself.
+      - name: Revert the changelog commit
+        if: >-
+          always() && steps.release.outcome != 'success' &&
+          (steps.push.outcome == 'success' || steps.push.outcome == 'failure' || steps.push.outcome == 'cancelled')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          # A partly created release (a draft or a tag) must not outlive the revert.
+          gh release delete "v$V" --yes --cleanup-tag || true
+          for attempt in 1 2; do
+            if git fetch origin main; then
+              rc=0
+              git merge-base --is-ancestor "$RELEASE_SHA" origin/main || rc=$?
+              if [ "$rc" -eq 1 ]; then
+                echo "The changelog commit never reached main; nothing to revert."
+                exit 0
+              elif [ "$rc" -ne 0 ]; then
+                echo "::error::Couldn't tell whether $RELEASE_SHA reached main (git merge-base exited $rc). Check main and revert the changelog commit by hand if it's there."
+                exit 1
+              fi
+              git reset -q --hard origin/main
+              if git revert --no-edit "$RELEASE_SHA" && git push origin HEAD:refs/heads/main; then
+                echo "Reverted $RELEASE_SHA on main."
+                exit 0
+              fi
+              git revert --abort 2>/dev/null || true
+            fi
+            echo "Revert attempt $attempt failed; retrying on a fresh origin/main."
+          done
+          echo "::error::Couldn't revert the changelog commit $RELEASE_SHA on main. Revert it by hand before the next release."
+          exit 1
+
+      - name: Delete the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/k.jks"

@@ -1,0 +1,291 @@
+package io.github.joshitup.lantern.ui.search
+
+import androidx.compose.runtime.Immutable
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import io.github.joshitup.lantern.AppContainer
+import io.github.joshitup.lantern.ao3.model.Block
+import io.github.joshitup.lantern.ao3.model.SearchQuery
+import io.github.joshitup.lantern.ao3.model.WorkBlurb
+import io.github.joshitup.lantern.ao3.net.FetchResult
+import io.github.joshitup.lantern.ao3.parse.Ao3Urls
+import io.github.joshitup.lantern.ao3.parse.BlockConverter
+import io.github.joshitup.lantern.data.Loaded
+import io.github.joshitup.lantern.data.SearchSource
+import io.github.joshitup.lantern.data.db.PresetDao
+import io.github.joshitup.lantern.data.db.PresetEntity
+import io.github.joshitup.lantern.data.db.ProgressDao
+import io.github.joshitup.lantern.data.db.ProgressEntity
+import io.github.joshitup.lantern.data.db.ReadMarkDao
+import io.github.joshitup.lantern.data.searchQueryFromJson
+import io.github.joshitup.lantern.data.toJson
+import io.github.joshitup.lantern.ui.common.CardLinks
+import io.github.joshitup.lantern.ui.common.cardLinks
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.jsoup.Jsoup
+
+@Immutable
+data class SearchUiState(
+    val query: SearchQuery = SearchQuery(),
+    val works: List<WorkBlurb> = emptyList(),
+    val page: Int = 0,
+    val hasNext: Boolean = false,
+    val loading: Boolean = false,
+    val error: FetchResult? = null,
+    val presets: List<PresetEntity> = emptyList(),
+    val activePresetId: Long? = null,
+    val continueReading: ProgressEntity? = null,
+    val progressByWork: Map<Long, ProgressEntity> = emptyMap(),
+    val readMarks: Set<Long> = emptySet(),
+    /** Works with a stored download (the card's "⤓"). */
+    val downloadedIds: Set<Long> = emptySet(),
+    /** Summary of each shown work, converted once off the main thread. */
+    val summaries: Map<Long, List<Block>> = emptyMap(),
+    /** Author and series links of each shown work, built with the summaries. */
+    val links: Map<Long, CardLinks> = emptyMap(),
+    /** True once any search has been started; distinguishes "no results" from "not searched yet". */
+    val searched: Boolean = false,
+    /** Bumped by every [SearchViewModel.runSearch], so the screen can react to each new search. */
+    val searchId: Int = 0,
+)
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class SearchViewModel(
+    private val source: SearchSource,
+    private val presetDao: PresetDao,
+    private val progressDao: ProgressDao,
+    private val readMarkDao: ReadMarkDao,
+    private val parseDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val downloadedIds: Flow<Set<Long>> = flowOf(emptySet()),
+) : ViewModel() {
+    private val _state = MutableStateFlow(SearchUiState())
+    val state: StateFlow<SearchUiState> = _state.asStateFlow()
+
+    /** The query the shown results belong to; next pages use it, not unapplied edits. */
+    private var shownQuery: SearchQuery = SearchQuery()
+    /** Bumped by every runSearch; a load whose generation is stale is discarded. */
+    private var generation = 0
+    private var loadJob: Job? = null
+    /** Page whose load failed, so retry() repeats the right request. */
+    private var failedPage: Int? = null
+
+    init {
+        viewModelScope.launch {
+            presetDao.observeAll().collect { list -> _state.update { it.copy(presets = list) } }
+        }
+        viewModelScope.launch {
+            downloadedIds.distinctUntilChanged().collect { ids -> _state.update { it.copy(downloadedIds = ids) } }
+        }
+        viewModelScope.launch {
+            progressDao.observeLatest().collect { p -> _state.update { it.copy(continueReading = p) } }
+        }
+        viewModelScope.launch {
+            _state.map { s -> s.works.map { it.workId } }
+                .distinctUntilChanged()
+                .flatMapLatest { ids ->
+                    if (ids.isEmpty()) flowOf(emptyMap<Long, ProgressEntity>() to emptySet<Long>())
+                    else combine(progressDao.observeFor(ids), readMarkDao.observeFor(ids)) { p, m ->
+                        p.associateBy { it.workId } to m.mapTo(HashSet()) { it.workId }
+                    }
+                }
+                .distinctUntilChanged()
+                .collect { (p, m) -> _state.update { it.copy(progressByWork = p, readMarks = m) } }
+        }
+    }
+
+    fun setQuery(q: SearchQuery) {
+        _state.update { s ->
+            val active = s.presets.firstOrNull { it.id == s.activePresetId }
+            val stillActive = active != null && runCatching { searchQueryFromJson(active.queryJson) }.getOrNull() == q
+            s.copy(query = q, activePresetId = if (stillActive) s.activePresetId else null)
+        }
+    }
+
+    fun runSearch() {
+        loadJob?.cancel()
+        val gen = ++generation
+        val q = _state.value.query
+        shownQuery = q
+        failedPage = null
+        _state.update { it.copy(works = emptyList(), summaries = emptyMap(), links = emptyMap(), page = 0, hasNext = false,
+            loading = true, error = null, searched = true, searchId = it.searchId + 1) }
+        loadJob = viewModelScope.launch { load(gen, q, 1) }
+    }
+
+    fun loadNextPage() {
+        val s = _state.value
+        if (s.loading || !s.hasNext || s.error != null) return
+        startPage(s.page + 1)
+    }
+
+    /** Repeats the request that failed (first page or a next page). */
+    fun retry() {
+        val p = failedPage ?: return
+        if (_state.value.loading) return
+        if (p <= 1) {
+            _state.update { it.copy(query = shownQuery) }
+            runSearch()
+        } else {
+            startPage(p)
+        }
+    }
+
+    private fun startPage(page: Int) {
+        val gen = generation
+        val q = shownQuery
+        failedPage = null
+        _state.update { it.copy(loading = true, error = null) }
+        loadJob = viewModelScope.launch { load(gen, q, page) }
+    }
+
+    /** Never leaves [SearchUiState.loading] stuck: anything unexpected becomes [FetchResult.Failed]. */
+    private suspend fun load(gen: Int, q: SearchQuery, page: Int) {
+        try {
+            loadPage(gen, q, page)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (gen != generation) return
+            failedPage = page
+            _state.update { it.copy(loading = false, error = FetchResult.Failed(e)) }
+        }
+    }
+
+    private suspend fun loadPage(gen: Int, q: SearchQuery, page: Int) {
+        val result = source.search(q, page)
+        if (gen != generation) return
+        when (result) {
+            is Loaded.Ok -> {
+                val have = _state.value.works.mapTo(HashSet()) { it.workId }
+                // AO3 listings can shift between requests; never show a work twice (LazyColumn keys).
+                val fresh = result.value.works.filter { have.add(it.workId) }
+                val (summaries, links) = withContext(parseDispatcher) {
+                    fresh.associate { it.workId to convertSummary(it.summaryHtml) } to
+                        fresh.associate { it.workId to it.cardLinks() }
+                }
+                if (gen != generation) return
+                _state.update {
+                    it.copy(works = it.works + fresh, summaries = it.summaries + summaries, links = it.links + links,
+                        page = page, hasNext = result.value.hasNext, loading = false, error = null)
+                }
+            }
+            is Loaded.Error -> {
+                failedPage = page
+                _state.update { it.copy(loading = false, error = result.result) }
+            }
+        }
+    }
+
+    fun applyPreset(id: Long) {
+        val p = _state.value.presets.firstOrNull { it.id == id } ?: return
+        val q = runCatching { searchQueryFromJson(p.queryJson) }.getOrElse { SearchQuery() }
+        _state.update { it.copy(query = q, activePresetId = id) }
+        runSearch()
+    }
+
+    fun savePreset(name: String) {
+        val s = _state.value
+        val position = (s.presets.maxOfOrNull { it.position } ?: -1) + 1
+        viewModelScope.launch {
+            val id = presetDao.insert(PresetEntity(name = name.trim(), position = position, queryJson = s.query.toJson()))
+            _state.update { if (it.query == s.query) it.copy(activePresetId = id) else it }
+        }
+    }
+
+    fun renamePreset(id: Long, name: String) {
+        val p = _state.value.presets.firstOrNull { it.id == id } ?: return
+        viewModelScope.launch { presetDao.update(p.copy(name = name.trim())) }
+    }
+
+    fun updatePresetFromCurrent(id: Long) {
+        val s = _state.value
+        val p = s.presets.firstOrNull { it.id == id } ?: return
+        viewModelScope.launch {
+            presetDao.update(p.copy(queryJson = s.query.toJson()))
+            _state.update { if (it.query == s.query) it.copy(activePresetId = id) else it }
+        }
+    }
+
+    fun deletePreset(id: Long) {
+        _state.update { if (it.activePresetId == id) it.copy(activePresetId = null) else it }
+        viewModelScope.launch { presetDao.delete(id) }
+    }
+
+    fun reorderPresets(ids: List<Long>) {
+        viewModelScope.launch { presetDao.reorder(ids) }
+    }
+
+    /**
+     * Suggestions for a tag field. Cached results (or a cached prefix's results, narrowed locally)
+     * are emitted at once; when those can't be final, a request follows after
+     * [AUTOCOMPLETE_DEBOUNCE_MS]. The collector restarts on every keystroke (a LaunchedEffect keyed
+     * on the text), which cancels a superseded flow, including a request still queued behind
+     * the fetcher's lock, so stale terms never hold up the queue.
+     */
+    fun autocomplete(kind: String, term: String): Flow<List<String>> = flow {
+        if (term.trim().length < 2) {
+            emit(emptyList())
+            return@flow
+        }
+        val local = source.cachedAutocomplete(kind, term)
+        if (local != null) {
+            emit(local.names)
+            if (local.final) return@flow
+        }
+        delay(AUTOCOMPLETE_DEBOUNCE_MS)
+        val result = try {
+            source.autocomplete(kind, term)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
+        emit(result)
+    }
+
+    companion object {
+        const val AUTOCOMPLETE_DEBOUNCE_MS = 150L
+
+        fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
+            initializer {
+                SearchViewModel(
+                    container.searchRepo,
+                    container.db.presetDao(),
+                    container.db.progressDao(),
+                    container.db.readMarkDao(),
+                    downloadedIds = container.downloadRepo.downloadedIds(),
+                )
+            }
+        }
+
+        internal fun convertSummary(html: String?): List<Block> {
+            if (html.isNullOrBlank()) return emptyList()
+            return try {
+                BlockConverter.convert(Jsoup.parseBodyFragment(html, Ao3Urls.BASE_URI).body())
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+    }
+}
