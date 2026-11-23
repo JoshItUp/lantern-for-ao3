@@ -76,7 +76,7 @@ internal fun ReleaseNotesBody(release: ReleaseInfo, heading: String? = "What's n
 private fun InstallStatus(install: UpdateState, onLater: () -> Unit, onDownload: () -> Unit, onAllowInstall: () -> Unit) {
     when (install) {
         is UpdateState.Downloading -> Progress("Downloading…", install.progress)
-        UpdateState.Installing, is UpdateState.AwaitingConfirmation, UpdateState.Done -> Progress("Installing…", null)
+        UpdateState.Installing, is UpdateState.AwaitingConfirmation -> Progress("Installing…", null)
         UpdateState.NeedsPermission -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = onAllowInstall, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
                 Text("Allow Lantern to install updates")

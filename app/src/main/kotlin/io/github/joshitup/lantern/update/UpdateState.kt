@@ -11,5 +11,4 @@ sealed interface UpdateState {
     data class AwaitingConfirmation(val intent: Intent) : UpdateState
     data object NeedsPermission : UpdateState
     data class Failed(val message: String) : UpdateState
-    data object Done : UpdateState
 }
