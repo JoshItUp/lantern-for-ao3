@@ -54,4 +54,29 @@ class SearchUrlTest {
         assertNull(url.queryParameter("work_search[query]"))
         assertNull(url.queryParameter("work_search[title]"))
     }
+
+    @Test fun exclusions_allSentAsExcludedTagNames() {
+        val url = SearchQuery(
+            excludedTags = listOf("Fluff"), excludedRelationships = listOf("A/B"), excludedCharacters = listOf("C"),
+            excludedRatings = setOf(Rating.EXPLICIT), excludedWarnings = setOf(Warning.MCD), excludedCategories = setOf(Category.MM),
+        ).toUrl(1)
+        assertEquals("Fluff,A/B,C,Explicit,Major Character Death,M/M", url.queryParameter("work_search[excluded_tag_names]"))
+    }
+
+    @Test fun excludedNames_deduplicated() {
+        val url = SearchQuery(excludedTags = listOf("c", " "), excludedCharacters = listOf("C")).toUrl(1)
+        assertEquals("c", url.queryParameter("work_search[excluded_tag_names]"))
+    }
+
+    @Test fun noExclusions_noParameter() {
+        assertNull(SearchQuery().toUrl(1).queryParameter("work_search[excluded_tag_names]"))
+    }
+
+    @Test fun oldPresetJson_decodes() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        assertEquals(
+            SearchQuery(fandoms = listOf("F"), excludedTags = listOf("X"), ratings = setOf(Rating.TEEN)),
+            json.decodeFromString(SearchQuery.serializer(), """{"fandoms":["F"],"excludedTags":["X"],"ratings":["TEEN"]}"""),
+        )
+    }
 }

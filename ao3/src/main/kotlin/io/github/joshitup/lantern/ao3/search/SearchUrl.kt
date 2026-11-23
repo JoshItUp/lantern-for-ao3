@@ -18,7 +18,7 @@ fun SearchQuery.toUrl(page: Int): HttpUrl {
     add("character_names", characters.joinToString(","))
     add("relationship_names", relationships.joinToString(","))
     add("freeform_names", freeforms.joinToString(","))
-    add("excluded_tag_names", excludedTags.joinToString(","))
+    add("excluded_tag_names", excludedNames().joinToString(","))
     ratings.forEach { b.addQueryParameter("work_search[rating_ids]", it.id.toString()) }
     warnings.forEach { b.addQueryParameter("work_search[archive_warning_ids][]", it.id.toString()) }
     categories.forEach { b.addQueryParameter("work_search[category_ids][]", it.id.toString()) }
