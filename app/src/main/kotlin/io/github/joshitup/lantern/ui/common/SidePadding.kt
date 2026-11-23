@@ -38,7 +38,8 @@ fun sidePadding(available: Dp, maxContent: Dp, base: Dp, cutoutStart: Dp, cutout
 /** The width the reader lays its text out at, in px, for a list [viewportPx] wide ([sidePadding] in px). */
 fun readerContentWidthPx(viewportPx: Int, density: Float, cutoutStartPx: Int, cutoutEndPx: Int): Int {
     val s = sidePadding((viewportPx / density).dp, READER_MAX_WIDTH, READER_BASE_PADDING, (cutoutStartPx / density).dp, (cutoutEndPx / density).dp)
-    return (viewportPx - (s.start.value + s.end.value) * density).roundToInt()
+    // Each side rounded on its own, as the list rounds its content padding.
+    return viewportPx - (s.start.value * density).roundToInt() - (s.end.value * density).roundToInt()
 }
 
 /** [sidePadding] for the current window, clear of a camera cutout or a side navigation bar. */
@@ -68,3 +69,6 @@ val LIST_BASE_PADDING = 12.dp
 /** [rememberSidePadding] for a card list. */
 @Composable
 fun rememberListSides(): Sides = rememberSidePadding(LIST_MAX_WIDTH, LIST_BASE_PADDING)
+
+/** What these sides add over [base] (never negative): for a row that keeps its own padding but must line up with the list. */
+fun Sides.beyond(base: Dp): Sides = Sides((start - base).coerceAtLeast(0.dp), (end - base).coerceAtLeast(0.dp))

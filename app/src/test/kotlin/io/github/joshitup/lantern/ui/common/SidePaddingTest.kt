@@ -28,4 +28,15 @@ class SidePaddingTest {
         // 720 dp wide, 30 dp cutout → sides 50/20 → 650 dp.
         assertEquals(1300, readerContentWidthPx(viewportPx = 1440, density = 2f, cutoutStartPx = 60, cutoutEndPx = 0))
     }
+
+    @Test fun beyond_isTheExtraOverTheBase() {
+        assertEquals(Sides(0.dp, 0.dp), Sides(12.dp, 12.dp).beyond(12.dp))
+        assertEquals(Sides(85.5.dp, 48.dp), Sides(97.5.dp, 60.dp).beyond(12.dp))
+        assertEquals(Sides(0.dp, 0.dp), Sides(8.dp, 10.dp).beyond(12.dp))
+    }
+
+    @Test fun readerContentWidth_roundsEachSideLikeTheList() {
+        // 20 dp at 2.625 is 52.5 px; LazyColumn rounds each side to 53, so the text is 1080 − 106 wide.
+        assertEquals(974, readerContentWidthPx(viewportPx = 1080, density = 2.625f, cutoutStartPx = 0, cutoutEndPx = 0))
+    }
 }

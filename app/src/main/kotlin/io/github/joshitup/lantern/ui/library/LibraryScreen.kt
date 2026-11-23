@@ -66,6 +66,8 @@ import io.github.joshitup.lantern.ui.search.badgeText
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import io.github.joshitup.lantern.ui.common.LIST_BASE_PADDING
+import io.github.joshitup.lantern.ui.common.beyond
 import io.github.joshitup.lantern.ui.common.rememberListSides
 import io.github.joshitup.lantern.ui.common.heightForLabel
 
@@ -96,7 +98,7 @@ private fun LibrarySection.emptyText() = when (this) {
 fun LibraryScreen(
     vm: LibraryViewModel,
     downloadsVm: DownloadsViewModel,
-    /** The bottom bar overlays this screen; the list pads by it (constant, so nothing relayouts). */
+    /** The bottom bar overlays this screen; the list pads by it (its measured height, which only changes with the system font size). */
     bottomBarHeight: Dp,
     onAccount: () -> Unit,
     onOpenWork: OpenWork,
@@ -176,7 +178,10 @@ fun LibraryScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun Tabs(selected: Int, onTap: (Int) -> Unit) {
+    // Lined up with the cards: their extra side padding on wide screens, a cutout or a side navigation bar.
+    val extra = rememberListSides().beyond(LIST_BASE_PADDING)
     SecondaryScrollableTabRow(
+        modifier = Modifier.padding(start = extra.start, end = extra.end),
         selectedTabIndex = selected,
         containerColor = MaterialTheme.colorScheme.background,
         contentColor = MaterialTheme.colorScheme.onBackground,

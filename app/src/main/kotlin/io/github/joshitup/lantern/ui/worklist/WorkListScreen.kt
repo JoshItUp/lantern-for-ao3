@@ -55,6 +55,8 @@ import io.github.joshitup.lantern.ui.search.badgeText
 import io.github.joshitup.lantern.ui.search.errorMessage
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import io.github.joshitup.lantern.ui.common.LIST_BASE_PADDING
+import io.github.joshitup.lantern.ui.common.beyond
 import io.github.joshitup.lantern.ui.common.rememberListSides
 
 /** Items from the end of the list at which the next page is requested (as in Search). */
@@ -102,7 +104,12 @@ fun WorkListScreen(
             .background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility),
     ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Lined up with the cards: their extra side padding on wide screens, a cutout or a side navigation bar.
+        val extra = rememberListSides().beyond(LIST_BASE_PADDING)
+        Row(
+            Modifier.fillMaxWidth().padding(start = extra.start, end = extra.end).padding(horizontal = 4.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             IconButton(onClick = onBack) { Icon(AppIcons.Back, contentDescription = "Back") }
             Text(
                 state.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,

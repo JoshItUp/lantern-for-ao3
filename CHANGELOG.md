@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Two more reading fonts: Atkinson Hyperlegible, made for legibility, and OpenDyslexic. Inter and Mono now have true italics.
+- Two more reading fonts: Atkinson Hyperlegible Next, made for legibility, and OpenDyslexic. Inter and Mono now have true italics.
 
 ### Changed
 - Chapters written as one long paragraph with blank lines are now laid out paragraph by paragraph, like every other chapter. Your place in a chapter is kept.
