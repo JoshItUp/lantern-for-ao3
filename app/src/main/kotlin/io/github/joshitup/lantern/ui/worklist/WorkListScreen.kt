@@ -55,6 +55,7 @@ import io.github.joshitup.lantern.ui.search.badgeText
 import io.github.joshitup.lantern.ui.search.errorMessage
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import io.github.joshitup.lantern.ui.common.rememberListSides
 
 /** Items from the end of the list at which the next page is requested (as in Search). */
 private const val PREFETCH_DISTANCE = 5
@@ -116,10 +117,11 @@ fun WorkListScreen(
             }
         }
         val bottomInset = WindowInsets.navigationBarsIgnoringVisibility.asPaddingValues().calculateBottomPadding()
+        val sides = rememberListSides()
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 10.dp, bottom = bottomInset + 24.dp),
+            contentPadding = PaddingValues(start = sides.start, end = sides.end, top = 10.dp, bottom = bottomInset + 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (state.works.isEmpty()) {

@@ -96,6 +96,11 @@ import kotlin.math.roundToInt
 import androidx.compose.ui.text.rememberTextMeasurer
 import io.github.joshitup.lantern.ui.common.QUOTE_TEXT_INSET
 import kotlinx.coroutines.flow.first
+import io.github.joshitup.lantern.ui.common.READER_BASE_PADDING
+import io.github.joshitup.lantern.ui.common.READER_MAX_WIDTH
+import io.github.joshitup.lantern.ui.common.sideInsetsPx
+import io.github.joshitup.lantern.ui.common.readerContentWidthPx
+import io.github.joshitup.lantern.ui.common.rememberSidePadding
 
 /** What one chapter pane shows; AnimatedContent keeps the outgoing pane's copy only while it slides out. */
 private data class Page(val index: Int, val content: ChapterContent?, val showSpinner: Boolean, val error: FetchResult?)
@@ -402,6 +407,7 @@ private fun ChapterText(
     val report by rememberUpdatedState(if (isCurrent) onScroll else null)
 
     val noteStyle = remember(style) { style.forNotes() }
+    val cutout = sideInsetsPx()
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val linkColor = MaterialTheme.colorScheme.primary
@@ -410,7 +416,7 @@ private fun ChapterText(
             // A place saved inside a paragraph that now splits: lay the old paragraph out at the list's width to find it.
             val target = restoreInBlock?.let { b ->
                 val viewport = snapshotFlow { listState.layoutInfo.viewportSize.width }.first { it > 0 }
-                val itemWidth = viewport - with(density) { (READER_SIDE_PADDING * 2).roundToPx() }
+                val itemWidth = readerContentWidthPx(viewport, density.density, cutout.first, cutout.second)
                 measureInBlock(
                     b, measurer, if (b.note) noteStyle else style, itemWidth, linkColor,
                     quoteInsetPx = with(density) { QUOTE_TEXT_INSET.roundToPx() },
@@ -434,8 +440,10 @@ private fun ChapterText(
     val links = remember(content) { content.headerLinks() }
     // Stable padding: the bars come and go with the controls, the text must not jump.
     val bars = WindowInsets.systemBarsIgnoringVisibility.asPaddingValues()
+    // Centred and capped on wide screens, clear of a side camera cutout in landscape.
+    val sides = rememberSidePadding(READER_MAX_WIDTH, READER_BASE_PADDING)
     val padding = PaddingValues(
-        start = READER_SIDE_PADDING, end = READER_SIDE_PADDING,
+        start = sides.start, end = sides.end,
         top = bars.calculateTopPadding() + 16.dp, bottom = bars.calculateBottomPadding() + 24.dp,
     )
 
@@ -590,5 +598,3 @@ private fun FlushOnStop(vm: ReaderViewModel) {
     }
 }
 
-/** The reader list's side padding; a legacy restore measures text at the width it leaves. */
-private val READER_SIDE_PADDING = 20.dp

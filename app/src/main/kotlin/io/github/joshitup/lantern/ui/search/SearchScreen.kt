@@ -89,6 +89,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
+import io.github.joshitup.lantern.ui.common.rememberListSides
 
 /** Opens the reader. chapterId null + number 1 means "start of the work". */
 typealias OpenWork = (workId: Long, chapterId: Long?, number: Int) -> Unit
@@ -203,6 +204,7 @@ fun SearchScreen(
 
     // Pad for the bars even while the reader has them hidden, so this screen never shifts when
     // they come back during the pop transition.
+    val sides = rememberListSides()
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.systemBarsIgnoringVisibility,
@@ -225,7 +227,7 @@ fun SearchScreen(
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.background)
                     .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
-                    .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 10.dp),
+                    .padding(start = sides.start, end = sides.end, top = 12.dp, bottom = 10.dp),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SearchBar(
@@ -245,7 +247,7 @@ fun SearchScreen(
             state = listState,
             modifier = Modifier.fillMaxSize().nestedScroll(barScroll),
             contentPadding = PaddingValues(
-                start = 12.dp, end = 12.dp,
+                start = sides.start, end = sides.end,
                 // The bar's own bottom padding gives the 10 dp gap above the first item.
                 top = inner.calculateTopPadding(),
                 bottom = inner.calculateBottomPadding() + bottomBarHeight + 24.dp,
