@@ -211,7 +211,7 @@ class AppContainer(val context: Context) {
                 }
             },
             markPending = updateRepo::markPendingWhatsNew,
-            install = { apk -> withContext(Dispatchers.IO) { updateInstaller.install(apk) } },
+            install = { apk, onSession -> withContext(Dispatchers.IO) { updateInstaller.install(apk, onSession) } },
         )
     }
 

@@ -17,8 +17,8 @@ class UpdateInstaller(private val context: Context) {
     fun permissionIntent(): Intent =
         Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
 
-    /** Blocking (writes the file into the session); the result arrives at [InstallResultReceiver]. */
-    fun install(apk: File) {
+    /** Blocking (writes the file into the session); the result arrives at [InstallResultReceiver]. [onSession] gets the id before commit. */
+    fun install(apk: File, onSession: (Int) -> Unit) {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(context.packageName)
@@ -26,6 +26,7 @@ class UpdateInstaller(private val context: Context) {
             setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
         }
         val id = installer.createSession(params)
+        onSession(id)
         try {
             installer.openSession(id).use { session ->
                 session.openWrite("lantern.apk", 0, apk.length()).use { out ->

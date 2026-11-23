@@ -122,6 +122,8 @@ class Session(
     private val generation = AtomicLong()
     /** Bumped by [signIn] and [signOut]: a login started under an older epoch is discarded. */
     private val epoch = AtomicLong()
+    /** The epoch [signOut] started; equal to [epoch] while no sign-in has started since. Guarded by [reloginLock]. */
+    private var signedOutEpoch = -1L
     /** Silent re-login pause after a failure that wasn't a rejection; null when not paused. */
     @Volatile private var pause: Pause? = null
 
@@ -151,7 +153,10 @@ class Session(
                     }
                     true
                 }
-                if (!committed) return SignInResult.Error(FetchResult.Failed(SessionSupersededException()))
+                if (!committed) {
+                    dropCookiesIfSignedOutSince()
+                    return SignInResult.Error(FetchResult.Failed(SessionSupersededException()))
+                }
             }
             is SignInResult.Rejected -> if (epoch.get() == ep) _state.value = SIGNED_OUT
             is SignInResult.Error -> Unit
@@ -165,7 +170,7 @@ class Session(
             reloginLock.withLock {
                 inFlight?.cancelAndJoin()
                 inFlight = null
-                epoch.incrementAndGet()
+                signedOutEpoch = epoch.incrementAndGet()
                 accountKnown = false
                 withContext(io) { store.clear() }
             }
@@ -387,6 +392,16 @@ class Session(
                 return Attempt(SignInResult.Rejected("AO3 didn't accept the user name or password."))
             }
             return Attempt(SignInResult.Error(FetchResult.Failed(SignInFlowException("unexpected page after login"))))
+        }
+    }
+
+    /**
+     * A superseded sign-in's POST may have landed after [signOut] cleared the jar, leaving AO3 session
+     * cookies behind a signed-out state: clear them, unless a newer sign-in started (the jar is its own).
+     */
+    private suspend fun dropCookiesIfSignedOutSince() = withContext(NonCancellable) {
+        reloginLock.withLock {
+            if (epoch.get() == signedOutEpoch) withContext(io) { cookies() }
         }
     }
 

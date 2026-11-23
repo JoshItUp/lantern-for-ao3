@@ -38,6 +38,7 @@ class UpdateControllerTest {
     private var pending: ReleaseInfo? = null
     private var installed: File? = null
     private val events = mutableListOf<String>()
+    private var sessions = 0
 
     private fun controller(scope: TestScope) = UpdateController(
         scope = scope.backgroundScope,
@@ -51,7 +52,10 @@ class UpdateControllerTest {
         },
         verify = { verifyError?.let { throw it }; verifies },
         markPending = { pending = it; events += "pending" },
-        install = { installed = it; events += "install" },
+        install = { apk, onSession ->
+            onSession(++sessions)
+            installed = apk; events += "install"
+        },
         installTimeoutMs = TIMEOUT,
     )
 
@@ -126,7 +130,8 @@ class UpdateControllerTest {
 
     @Test fun installFailure_reported() = runTest(UnconfinedTestDispatcher()) {
         val c = controller(this)
-        c.reportInstallFailure("INSTALL_FAILED_UPDATE_INCOMPATIBLE")
+        c.start(release)
+        c.reportInstallFailure(sessions, "INSTALL_FAILED_UPDATE_INCOMPATIBLE")
         assertEquals(UpdateState.Failed("Install failed: INSTALL_FAILED_UPDATE_INCOMPATIBLE"), c.state.value)
     }
 
@@ -143,7 +148,7 @@ class UpdateControllerTest {
         val c = controller(this)
         c.start(release)
         val confirm = Intent("test.CONFIRM")
-        c.awaitConfirmation(confirm)
+        c.awaitConfirmation(sessions, confirm)
         assertEquals(UpdateState.AwaitingConfirmation(confirm), c.state.value)
         c.confirmationLaunched()
         assertEquals(UpdateState.Installing, c.state.value)
@@ -154,7 +159,7 @@ class UpdateControllerTest {
         c.start(release)
         advanceTimeBy(TIMEOUT - 1); runCurrent()
         assertEquals(UpdateState.Installing, c.state.value)
-        c.awaitConfirmation(Intent("test.CONFIRM")) // a callback restarts the clock
+        c.awaitConfirmation(sessions, Intent("test.CONFIRM")) // a callback restarts the clock
         advanceTimeBy(TIMEOUT - 1); runCurrent()
         assertTrue(c.state.value is UpdateState.AwaitingConfirmation)
         advanceTimeBy(2); runCurrent()
@@ -164,7 +169,7 @@ class UpdateControllerTest {
     @Test fun watchdog_doesNotOverrideAReportedFailure() = runTest(UnconfinedTestDispatcher()) {
         val c = controller(this)
         c.start(release)
-        c.reportInstallFailure("aborted")
+        c.reportInstallFailure(sessions, "aborted")
         advanceTimeBy(TIMEOUT * 2); runCurrent()
         assertEquals(UpdateState.Failed("Install failed: aborted"), c.state.value)
     }
@@ -183,11 +188,29 @@ class UpdateControllerTest {
     @Test fun startFromStaleConfirmation_runsAgain() = runTest(UnconfinedTestDispatcher()) {
         val c = controller(this)
         c.start(release)
-        c.awaitConfirmation(Intent("test.CONFIRM"))
+        c.awaitConfirmation(sessions, Intent("test.CONFIRM"))
         tmp.root.resolve("lantern-1.2.3.apk").delete()
         c.start(release)
         assertEquals(2, downloads)
         assertEquals(UpdateState.Installing, c.state.value)
+    }
+
+    @Test fun staleSessionCallbacks_ignored() = runTest(UnconfinedTestDispatcher()) {
+        val c = controller(this)
+        c.start(release)
+        c.awaitConfirmation(1, Intent("test.CONFIRM"))
+        tmp.root.resolve("lantern-1.2.3.apk").delete()
+        gate = CompletableDeferred()
+        c.start(release) // the user starts again from the stale confirmation
+        c.reportInstallFailure(1, "user cancelled") // session 1's late result
+        assertTrue(c.state.value is UpdateState.Downloading)
+        gate!!.complete(Unit)
+        assertEquals(2, sessions)
+        c.awaitConfirmation(1, Intent("test.OLD"))
+        c.reportInstallFailure(1, "user cancelled")
+        assertEquals(UpdateState.Installing, c.state.value)
+        c.reportInstallFailure(2, "aborted")
+        assertEquals(UpdateState.Failed("Install failed: aborted"), c.state.value)
     }
 
     private companion object {

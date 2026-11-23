@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- TalkBack now reads a work card's authors and series along with the card, not only when each link is focused.
+- Signing out while a sign-in is still finishing no longer leaves you signed in to AO3 behind the scenes.
+- A late result from an earlier update attempt can no longer cancel or confuse a newer one.
+- Queued downloads try again later if the download list can't be read, instead of waiting for the next download.
+
 ## [1.0.2] - 2026-11-23
 
 ### Changed

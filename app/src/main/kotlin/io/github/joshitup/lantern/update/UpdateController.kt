@@ -24,7 +24,8 @@ class UpdateController(
     private val download: suspend (ReleaseInfo, (Float) -> Unit) -> File,
     private val verify: suspend (File) -> Boolean,
     private val markPending: suspend (ReleaseInfo) -> Unit,
-    private val install: suspend (File) -> Unit,
+    /** Reports the PackageInstaller session id before committing it, so its result can be matched to this run. */
+    private val install: suspend (File, onSession: (Int) -> Unit) -> Unit,
     private val installTimeoutMs: Long = INSTALL_TIMEOUT_MS,
 ) {
     private val _state = MutableStateFlow<UpdateState>(UpdateState.Idle)
@@ -34,6 +35,7 @@ class UpdateController(
     fun start(release: ReleaseInfo) {
         val prev = _state.getAndUpdate { if (it.busy) it else UpdateState.Downloading(0f) }
         if (prev.busy) return
+        session = null // an earlier run's late results no longer apply
         scope.launch { run(release) }
     }
 
@@ -46,14 +48,16 @@ class UpdateController(
         _state.update { if (it is UpdateState.NeedsPermission) UpdateState.Idle else it }
     }
 
-    /** From [InstallResultReceiver]: the system refused the package or the user cancelled. */
-    fun reportInstallFailure(message: String?) {
+    /** From [InstallResultReceiver]: the system refused the package or the user cancelled. Ignored for another run's session. */
+    fun reportInstallFailure(sessionId: Int, message: String?) {
+        if (sessionId != session) return
         disarmWatchdog()
         _state.value = UpdateState.Failed("Install failed: ${message ?: "unknown error"}")
     }
 
     /** From [InstallResultReceiver] on STATUS_PENDING_USER_ACTION; the receiver's own launch may be silently blocked. */
-    fun awaitConfirmation(intent: Intent) {
+    fun awaitConfirmation(sessionId: Int, intent: Intent) {
+        if (sessionId != session) return
         _state.value = UpdateState.AwaitingConfirmation(intent)
         armWatchdog()
     }
@@ -65,6 +69,9 @@ class UpdateController(
     }
 
     @Volatile private var watchdog: Job? = null
+
+    /** The current run's install session; null until it has one. */
+    @Volatile private var session: Int? = null
 
     /** If no callback arrives in time (or the confirmation never shows), fail so the user can retry. */
     private fun armWatchdog() {
@@ -112,7 +119,7 @@ class UpdateController(
             _state.value = UpdateState.Installing
             armWatchdog()
             markPending(release) // the process dies when the new version replaces this one
-            install(apk)
+            install(apk) { session = it }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

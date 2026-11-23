@@ -28,7 +28,7 @@ object AppForeground {
 
 /**
  * Drains the download queue one work at a time, oldest request first. A failure leaves its row FAILED
- * (Retry is manual) and moves on; the worker itself always succeeds.
+ * (Retry is manual) and moves on; the worker succeeds unless the queue itself can't be read (then it retries).
  */
 class DownloadWorker(
     context: Context,
@@ -49,7 +49,13 @@ class DownloadWorker(
     override suspend fun doWork(): Result {
         deps.repo.ready.join()
         while (true) {
-            val row = deps.repo.nextQueued() ?: break
+            val row = try {
+                deps.repo.nextQueued()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                return Result.retry() // The queue can't be read; rows stay QUEUED for a later run.
+            } ?: break
             showProgress(row.title)
             try {
                 deps.run(row.workId, deps.isForeground())

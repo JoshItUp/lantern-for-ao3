@@ -26,8 +26,11 @@ import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -194,8 +197,12 @@ fun LinkLine(prefix: String?, links: List<WorkLink>, style: TextStyle, color: Co
     val vc = LocalViewConfiguration.current
     val noMin = remember(vc) { NoMinTouchTarget(vc) }
     CompositionLocalProvider(LocalViewConfiguration provides noMin) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            val plain = Modifier.padding(vertical = LinkPadV, horizontal = LinkPadH)
+        // The whole line as text (not a description, which TalkBack would read instead of a card's title):
+        // a card merging this row reads its byline too, though each link stays its own focus target.
+        val line = listOfNotNull(prefix, links.joinToString(", ") { it.label }).joinToString(" ")
+        FlowRow(Modifier.semantics { text = AnnotatedString(line) }, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            // Plain parts are read through the row's text only.
+            val plain = Modifier.padding(vertical = LinkPadV, horizontal = LinkPadH).clearAndSetSemantics { }
             if (prefix != null) Text(prefix, style = style, color = color, modifier = plain)
             links.forEachIndexed { i, l ->
                 val text = if (i < links.lastIndex) l.label + "," else l.label

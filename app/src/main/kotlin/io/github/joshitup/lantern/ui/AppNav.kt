@@ -58,18 +58,8 @@ import io.github.joshitup.lantern.ui.search.SearchViewModel
 import io.github.joshitup.lantern.ui.worklist.WorkListScreen
 import io.github.joshitup.lantern.ui.worklist.WorkListViewModel
 import io.github.joshitup.lantern.ao3.parse.Ao3Urls
-import io.github.joshitup.lantern.ui.update.UpdateSheet
+import io.github.joshitup.lantern.ui.update.UpdateHost
 import io.github.joshitup.lantern.ui.update.UpdateViewModel
-import io.github.joshitup.lantern.ui.update.WhatsNewSheet
-import io.github.joshitup.lantern.update.UpdateState
-import android.util.Log
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.compose.currentStateAsState
 import kotlinx.coroutines.flow.MutableSharedFlow
 import okhttp3.HttpUrl
 
@@ -286,60 +276,7 @@ fun AppNav(container: AppContainer) {
         }
     }
 
-    UpdateHost(container, updates)
-}
-
-/**
- * The update sheet, the launch "What's new" and the install hand-offs that need the activity: the
- * confirmation the receiver couldn't show, and the retry once "Install unknown apps" was granted.
- */
-@Composable
-private fun UpdateHost(container: AppContainer, updates: UpdateViewModel) {
-    val state by updates.state.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    val lifeState by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
-    val resumed = lifeState.isAtLeast(Lifecycle.State.RESUMED)
-
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { updates.onResume() }
-
-    // The only launcher while the app is in the foreground (the receiver launches only in the background):
-    // on entering AwaitingConfirmation while resumed, and again on every resume while it lasts.
-    val install = state.install
-    LaunchedEffect(install, resumed) {
-        if (!resumed || install !is UpdateState.AwaitingConfirmation) return@LaunchedEffect
-        try {
-            context.startActivity(install.intent)
-        } catch (e: RuntimeException) {
-            Log.w("AppNav", "confirmation launch failed: ${e::class.java.simpleName}")
-        }
-        updates.confirmationLaunched() // the controller's watchdog fails it if nothing comes back
-    }
-
-    // After the first frame: startup never waits on DataStore or the notes fetch.
-    LaunchedEffect(Unit) {
-        withFrameNanos { }
-        updates.loadWhatsNew()
-    }
-
-    val release = state.release
-    if (state.sheetOpen && release != null) {
-        UpdateSheet(
-            release = release,
-            install = install,
-            onLater = updates::later,
-            onDownload = updates::download,
-            onAllowInstall = {
-                try {
-                    context.startActivity(container.updateInstaller.permissionIntent())
-                } catch (e: RuntimeException) {
-                    Log.w("AppNav", "permission screen failed: ${e::class.java.simpleName}")
-                }
-            },
-            onDismiss = updates::closeSheet,
-        )
-    } else {
-        state.whatsNew?.let { WhatsNewSheet(it, onDismiss = updates::whatsNewShown) }
-    }
+    UpdateHost(updates, container.updateInstaller::permissionIntent)
 }
 
 /** Top-level switch: each tab keeps its own back stack and scroll state. */
