@@ -54,6 +54,12 @@ import io.github.joshitup.lantern.ao3.model.SearchQuery
 import io.github.joshitup.lantern.ao3.model.SortColumn
 import io.github.joshitup.lantern.ao3.model.Warning
 import kotlinx.coroutines.flow.Flow
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import io.github.joshitup.lantern.ui.common.AppIcons
 
 /** A filter toggle's state: tapping cycles off → included → excluded → off. */
 enum class TriState { OFF, INCLUDED, EXCLUDED }
@@ -128,13 +134,20 @@ fun FilterSheet(
 
                 TagInput("Fandoms", "fandom", q.fandoms, autocomplete) { q = q.copy(fandoms = it) }
                 TagInput("Relationships", "relationship", q.relationships, autocomplete) { q = q.copy(relationships = it) }
+                TagInput("Exclude relationships", "relationship", q.excludedRelationships, autocomplete) {
+                    q = q.copy(excludedRelationships = it)
+                }
                 TagInput("Characters", "character", q.characters, autocomplete) { q = q.copy(characters = it) }
+                TagInput("Exclude characters", "character", q.excludedCharacters, autocomplete) {
+                    q = q.copy(excludedCharacters = it)
+                }
                 TagInput("Additional tags", "freeform", q.freeforms, autocomplete) { q = q.copy(freeforms = it) }
-                TagInput("Exclude tags", "tag", q.excludedTags, autocomplete) { q = q.copy(excludedTags = it) }
+                TagInput("Exclude other tags", "tag", q.excludedTags, autocomplete) { q = q.copy(excludedTags = it) }
 
                 Section("Rating") {
                     Rating.entries.forEach { r ->
-                        Choice(r.label, r in q.ratings) {
+                        // One rating included at most; any number excluded.
+                        TriStateChip(r.label, triState(r, q.ratings, q.excludedRatings)) {
                             val (inc, exc) = cycle(r, q.ratings, q.excludedRatings, singleInclude = true)
                             q = q.copy(ratings = inc, excludedRatings = exc)
                         }
@@ -142,12 +155,18 @@ fun FilterSheet(
                 }
                 Section("Warnings") {
                     Warning.entries.forEach { w ->
-                        Choice(w.label, w in q.warnings) { q = q.copy(warnings = q.warnings.toggle(w)) }
+                        TriStateChip(w.label, triState(w, q.warnings, q.excludedWarnings)) {
+                            val (inc, exc) = cycle(w, q.warnings, q.excludedWarnings)
+                            q = q.copy(warnings = inc, excludedWarnings = exc)
+                        }
                     }
                 }
                 Section("Categories") {
                     Category.entries.forEach { c ->
-                        Choice(c.label, c in q.categories) { q = q.copy(categories = q.categories.toggle(c)) }
+                        TriStateChip(c.label, triState(c, q.categories, q.excludedCategories)) {
+                            val (inc, exc) = cycle(c, q.categories, q.excludedCategories)
+                            q = q.copy(categories = inc, excludedCategories = exc)
+                        }
                     }
                 }
 
@@ -206,7 +225,6 @@ fun FilterSheet(
 private const val MIN_SUGGEST_CHARS = 2
 private const val MAX_SUGGESTIONS = 8
 
-private fun <T> Set<T>.toggle(v: T): Set<T> = if (v in this) this - v else this + v
 
 @Composable
 private fun Label(text: String) {
@@ -219,6 +237,36 @@ private fun Section(title: String, content: @Composable () -> Unit) {
         Label(title)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { content() }
     }
+}
+
+/**
+ * A filter toggle with three states: off, included (the usual selected look) and excluded (a muted red with a
+ * minus sign, announced as excluded so it isn't told apart by colour alone).
+ */
+@Composable
+internal fun TriStateChip(label: String, state: TriState, onClick: () -> Unit) {
+    val excluded = state == TriState.EXCLUDED
+    val colors = if (excluded) {
+        FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.errorContainer,
+            selectedLabelColor = MaterialTheme.colorScheme.onErrorContainer,
+            selectedLeadingIconColor = MaterialTheme.colorScheme.onErrorContainer,
+        )
+    } else {
+        FilterChipDefaults.filterChipColors()
+    }
+    FilterChip(
+        selected = state != TriState.OFF,
+        onClick = onClick,
+        label = { Text(label) },
+        leadingIcon = if (excluded) {
+            { Icon(AppIcons.Remove, contentDescription = null, Modifier.size(FilterChipDefaults.IconSize)) }
+        } else {
+            null
+        },
+        colors = colors,
+        modifier = if (excluded) Modifier.semantics { contentDescription = "$label, excluded" } else Modifier,
+    )
 }
 
 @Composable
